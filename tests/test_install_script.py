@@ -8,7 +8,8 @@ def test_install_script_is_posix_shell_and_bootstraps_onboard():
     assert 'npm install --global --force "$NODE_SOURCE"' in text
     assert "uv tool install --force --quiet" in text
     assert "Install Node last" in text
-    assert "exec marked --onboard </dev/tty" in text
+    assert "exec marked --onboard" in text
     assert text.index("uv tool install") < text.index("npm install --global")
-    assert "</dev/tty" in text
-    assert "MARKED_INSTALL_REEXEC=1" in text
+    assert 'main "$@" </dev/tty' in text
+    assert "Installing the agent harness" in text
+    assert "MARKED_INSTALL_REEXEC" not in text
