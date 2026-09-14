@@ -91,7 +91,7 @@ export async function runOnboarding(tui, {
   const target = scope.choice.value === 'repo' ? path.join(cwd, '.marked', 'config.json') : CONFIG_PATH;
 
   let apiKey = '';
-  let hint = 'Get a key at https://app.marked.run/dashboard · input is hidden';
+  let hint = 'Get a key at https://marked.run · input is hidden';
   while (true) {
     const answer = await tui.input({
       step: step(2, 'CONNECT MARKED'),
@@ -107,7 +107,7 @@ export async function runOnboarding(tui, {
     }
     await working(tui, 'STEP 2 OF 4 · CONNECT MARKED', 'Checking this key with Marked…');
     if (!await keyRejected(apiKey, fetchImpl)) break;
-    hint = 'Marked rejected that key · check it at https://app.marked.run/dashboard';
+    hint = 'Marked rejected that key · get one at https://marked.run';
   }
 
   await working(tui, 'STEP 3 OF 4 · CHOOSE RUNTIME', 'Looking for Claude Code, Codex, and existing Codex sign-in…');

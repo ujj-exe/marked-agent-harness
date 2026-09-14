@@ -16,14 +16,14 @@ const DEFAULTS = {
  */
 export const DESK = [
   ['/analyst',  '<company>',   'filings, fundamentals, or any research question'],
-  ['/compare',  '<a> and <b>',           '2–5 names separated by and / vs / comma'],
-  ['/macro',    '',                      'RBI, inflation, growth — the regime behind the trade'],
+  ['/compare',  '<a> and <b>',           '2 to 5 names, separated by and / vs / comma'],
+  ['/macro',    '',                      'RBI, inflation, growth, the regime behind the trade'],
   ['/sector',   '<sector>',              'rotations, thematics, and the names moving money'],
-  ['/desk',     '<company>',             'market pulse · 3 seconds · everything that matters'],
-  ['/risk',     '<company>',             'event impact · catalyst timing · what could go wrong'],
-  ['/options',  '<symbol>',              'chains, OI skew, positioning — where smart money leans'],
-  ['/futures',  '<symbol>',              'commodities, rates futures — the cross-asset tape'],
-  ['/watch',    '<companies>',           'what moved · conviction logged'],
+  ['/desk',     '<company>',             'market pulse, 3 seconds, everything that matters'],
+  ['/risk',     '<company>',             'event impact, catalyst timing, what could go wrong'],
+  ['/options',  '<symbol>',              'chains, OI skew, positioning, where smart money leans'],
+  ['/futures',  '<symbol>',              'commodities, rates futures, the cross-asset tape'],
+  ['/watch',    '<companies>',           'what moved, conviction logged'],
 ];
 
 const COMMANDS = new Set(DESK.map(([name]) => name.slice(1)));

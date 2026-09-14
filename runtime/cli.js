@@ -22,7 +22,7 @@ const hasHelp = args.includes('--help') || args.includes('-h');
 
 if (hasHelp) {
   const row = (left, right) => `  ${left.padEnd(32)}${right}`;
-  console.log(`Marked — India-first financial research terminal.
+  console.log(`Marked: a domain-specific agentic harness for Indian equity research.
 
 Usage: marked [options] [research question]
 
@@ -34,7 +34,7 @@ ${row('--agent <name>', 'Reasoning runtime for this run: claude, codex, openai-c
 ${row('--as-of <ISO-8601>', 'Answer as of a past timestamp instead of now')}
 ${row('--help, -h', 'Show this help')}
 
-The team — type these as a query, in the terminal or on the command line
+The team. Type these as a query, in the terminal or on the command line
 ${DESK.map(([name, arg, desc]) => row(`${name}${arg ? ` ${arg}` : ''}`, desc)).join('\n')}
 
 Terminal commands
@@ -56,7 +56,7 @@ ${row('marked-onboard', 'Re-run setup')}
 ${row('marked-auth', 'Sign in to OpenAI Codex (login · status · models · logout)')}
 ${row('marked-chart', 'Render a chart from a saved report')}
 
-Config lives in ~/.marked/config.json · keys at https://app.marked.run/dashboard`);
+Config lives in ~/.marked/config.json. Get an API key at https://marked.run`);
   process.exit(0);
 }
 

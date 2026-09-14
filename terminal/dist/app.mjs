@@ -3860,14 +3860,14 @@ function codexModels() {
 // runtime/commands.js
 var DESK = [
   ["/analyst", "<company>", "filings, fundamentals, or any research question"],
-  ["/compare", "<a> and <b>", "2\u20135 names separated by and / vs / comma"],
-  ["/macro", "", "RBI, inflation, growth \u2014 the regime behind the trade"],
+  ["/compare", "<a> and <b>", "2 to 5 names, separated by and / vs / comma"],
+  ["/macro", "", "RBI, inflation, growth, the regime behind the trade"],
   ["/sector", "<sector>", "rotations, thematics, and the names moving money"],
-  ["/desk", "<company>", "market pulse \xB7 3 seconds \xB7 everything that matters"],
-  ["/risk", "<company>", "event impact \xB7 catalyst timing \xB7 what could go wrong"],
-  ["/options", "<symbol>", "chains, OI skew, positioning \u2014 where smart money leans"],
-  ["/futures", "<symbol>", "commodities, rates futures \u2014 the cross-asset tape"],
-  ["/watch", "<companies>", "what moved \xB7 conviction logged"]
+  ["/desk", "<company>", "market pulse, 3 seconds, everything that matters"],
+  ["/risk", "<company>", "event impact, catalyst timing, what could go wrong"],
+  ["/options", "<symbol>", "chains, OI skew, positioning, where smart money leans"],
+  ["/futures", "<symbol>", "commodities, rates futures, the cross-asset tape"],
+  ["/watch", "<companies>", "what moved, conviction logged"]
 ];
 var COMMANDS = new Set(DESK.map(([name]) => name.slice(1)));
 
