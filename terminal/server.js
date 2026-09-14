@@ -91,6 +91,9 @@ const VALID_THEMES = new Set([
 // ---------------------------------------------------------------------------
 
 export const emitter = new EventEmitter();
+
+/** The runtime that has claimed this TUI, or null. */
+export function connectedAgent() { return _agentSession; }
 emitter.setMaxListeners(20);
 
 

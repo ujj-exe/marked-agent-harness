@@ -10,7 +10,7 @@ financial dataset and hosted data service are not included.
 ## Install
 
 ```bash
-curl -fsSL https://github.com/ujjwalpreenja1308-web/marked-agent-harness/releases/download/v0.1.2/install.sh | sh
+curl -fsSL https://marked.run/install | sh
 ```
 
 Installation opens the native Marked terminal and runs four steps using the
@@ -22,6 +22,7 @@ same full-screen UI:
 4. Choose a model.
 
 Run onboarding again with `marked-onboard`, or open the terminal with `marked`.
+Run `marked --help` for the full command reference.
 
 ## OpenAI Codex
 

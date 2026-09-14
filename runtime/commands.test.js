@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { expandDeskCommand, parseDeskCommand, parseModelCommand } from './commands.js';
+import { DESK, expandDeskCommand, parseDeskCommand, parseModelCommand } from './commands.js';
 
 describe('desk slash commands', () => {
   it('expands advertised commands into normal research queries', () => {
@@ -16,7 +16,6 @@ describe('desk slash commands', () => {
     expect(parseDeskCommand('/analyst').error).toMatch(/Usage/);
     expect(parseDeskCommand('/compare reliance').error).toMatch(/2–5/);
     expect(parseDeskCommand('/watch').error).toMatch(/watch/);
-    expect(parseDeskCommand('/portfolio').error).toMatch(/portfolio/);
   });
 
   it('maps every advertised command to its intended route', () => {
@@ -32,7 +31,6 @@ describe('desk slash commands', () => {
       ['/options NIFTY', 'derivatives'],
       ['/futures crude', 'derivatives'],
       ['/watch Reliance announcements', 'watch'],
-      ['/portfolio RELIANCE 60%, INFY 40%', 'portfolio'],
     ];
     for (const [input, route] of cases) {
       const parsed = parseDeskCommand(input);
@@ -132,5 +130,12 @@ describe('query overlay', () => {
     // An unknown slash word stays plain: the colour is a promise it will fire.
     expect(highlightCommand('/nonsense here')).toBe('/nonsense here');
     expect(highlightCommand('what is Reliance PAT?')).toBe('what is Reliance PAT?');
+  });
+
+  it('no longer answers to /portfolio', () => {
+    // Removed with the feature: an unmapped slash word must fall through to
+    // "unknown command", not quietly become a research query.
+    expect(parseDeskCommand('/portfolio RELIANCE 60%, INFY 40%')).toBeNull();
+    expect(DESK.map(([name]) => name)).not.toContain('/portfolio');
   });
 });

@@ -8,7 +8,7 @@ import { modelLabel } from '../config/models.js';
 import { MarkedOrchestrator } from './orchestrator.js';
 import { TuiClient } from './tui-client.js';
 import { appendConversationTurn, createConversation, formatConversationHistory, loadConversation, saveConversation } from './session.js';
-import { parseDeskCommand, parseModelCommand } from './commands.js';
+import { DESK, parseDeskCommand, parseModelCommand } from './commands.js';
 import { applyAnswer, companyClarification, nextClarification } from './clarify.js';
 import { resolvePlan } from './plan.js';
 import { runOnboarding } from './onboarding.js';
@@ -21,9 +21,42 @@ const args = rawArgs.filter(arg => arg !== '--onboard');
 const hasHelp = args.includes('--help') || args.includes('-h');
 
 if (hasHelp) {
-  console.log('Usage: marked [--onboard] [--agent claude|codex|openai-codex] [--as-of ISO-8601] [research question]');
-  console.log('Run without a question to enter queries in the TUI.');
-  console.log('In the TUI: /model switches the reasoning provider and model.');
+  const row = (left, right) => `  ${left.padEnd(32)}${right}`;
+  console.log(`Marked — India-first financial research terminal.
+
+Usage: marked [options] [research question]
+
+Run with no question to open the terminal and type queries there.
+
+Options
+${row('--onboard', 'Re-run setup: API key, runtime and model')}
+${row('--agent <name>', 'Reasoning runtime for this run: claude, codex, openai-codex')}
+${row('--as-of <ISO-8601>', 'Answer as of a past timestamp instead of now')}
+${row('--help, -h', 'Show this help')}
+
+The team — type these as a query, in the terminal or on the command line
+${DESK.map(([name, arg, desc]) => row(`${name}${arg ? ` ${arg}` : ''}`, desc)).join('\n')}
+
+Terminal commands
+${row('/marked <key>', 'Save a Marked API key without re-running setup')}
+${row('/model', 'Pick the reasoning runtime and model')}
+${row('/model claude opus', 'Set runtime and model directly, no picker')}
+${row('/new', 'Start a fresh conversation')}
+${row('/history', 'Show recent conversation turns')}
+
+Keys
+${row('n', 'Ask a question')}
+${row('?', 'Full keyboard reference')}
+${row('s · l', 'Save a report · load a saved one')}
+${row('1-9', 'Run a suggested follow-up')}
+${row('q', 'Back to the home screen, or quit from there')}
+
+Companion commands
+${row('marked-onboard', 'Re-run setup')}
+${row('marked-auth', 'Sign in to OpenAI Codex (login · status · models · logout)')}
+${row('marked-chart', 'Render a chart from a saved report')}
+
+Config lives in ~/.marked/config.json · keys at https://app.marked.run/dashboard`);
   process.exit(0);
 }
 

@@ -20,9 +20,6 @@ export function classifyIntent(question) {
   if (/\b(?:options?|futures?|derivatives?|open interest|oi)\b/.test(lower)) {
     return { kind: 'derivatives', references };
   }
-  if (/\b(?:portfolio|holdings?|allocation|concentration)\b/.test(lower)) {
-    return { kind: 'portfolio', references };
-  }
   const candidate = text.replace(LEADING_WORDS, '').trim();
   if ((LEADING_WORDS.test(text) && looksLikeCompanyReference(candidate)) || isBareEntityReference(text)) {
     return { kind: 'company', references: references.slice(0, 1) };

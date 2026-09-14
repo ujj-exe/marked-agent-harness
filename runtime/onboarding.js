@@ -7,6 +7,28 @@ import { runProcess } from './process.js';
 
 const step = (current, title) => ({ current, total: 4, title });
 
+const API_BASE = 'https://api.marked.run';
+
+/** Show what setup is doing while it waits, so a slow probe is not a dead screen. */
+const working = (tui, title, text) => tui.render({
+  _state: { stage: 'asking', agent: 'onboarding' },
+  blocks: [{ divider: title }, { text }],
+});
+
+/**
+ * Ask Marked whether this key is real. Only an explicit rejection counts:
+ * if the API is unreachable we cannot tell, and blocking setup on a network
+ * blip is worse than letting the first query report the problem.
+ */
+async function keyRejected(apiKey, fetchImpl) {
+  try {
+    const response = await fetchImpl(`${API_BASE}/v1/companies?limit=1`, {
+      headers: { Accept: 'application/json', 'X-API-Key': apiKey },
+    });
+    return response.status === 401 || response.status === 403;
+  } catch { return false; }
+}
+
 function commandExists(name, env = process.env) {
   return String(env.PATH || '').split(path.delimiter).some(dir => {
     try { fs.accessSync(path.join(dir, name), fs.constants.X_OK); return true; } catch { return false; }
@@ -54,6 +76,7 @@ export async function runOnboarding(tui, {
   cwd = process.cwd(),
   hasCommand = commandExists,
   runCommand = command,
+  fetchImpl = globalThis.fetch,
 } = {}) {
   const scope = await tui.ask({
     step: step(1, 'INSTALL SCOPE'),
@@ -68,17 +91,26 @@ export async function runOnboarding(tui, {
   const target = scope.choice.value === 'repo' ? path.join(cwd, '.marked', 'config.json') : CONFIG_PATH;
 
   let apiKey = '';
-  while (!/^mk_(?:live|test)_[A-Za-z0-9_-]{20,}$/.test(apiKey)) {
+  let hint = 'Get a key at https://app.marked.run/dashboard · input is hidden';
+  while (true) {
     const answer = await tui.input({
       step: step(2, 'CONNECT MARKED'),
       prompt: 'Paste your Marked API key',
-      hint: 'Get a key at https://app.marked.run/dashboard · input is hidden',
+      hint,
       secret: true,
     });
     if (answer.cancelled) throw new Error('Setup cancelled');
     apiKey = answer.value.trim();
+    if (!/^mk_(?:live|test)_[A-Za-z0-9_-]{20,}$/.test(apiKey)) {
+      hint = 'Marked keys start with mk_live_ or mk_test_ · try again';
+      continue;
+    }
+    await working(tui, 'STEP 2 OF 4 · CONNECT MARKED', 'Checking this key with Marked…');
+    if (!await keyRejected(apiKey, fetchImpl)) break;
+    hint = 'Marked rejected that key · check it at https://app.marked.run/dashboard';
   }
 
+  await working(tui, 'STEP 3 OF 4 · CHOOSE RUNTIME', 'Looking for Claude Code, Codex, and existing Codex sign-in…');
   const claude = hasCommand('claude');
   const codex = hasCommand('codex');
   const auth = await codexSignedIn(runCommand);
@@ -111,12 +143,8 @@ export async function runOnboarding(tui, {
     agent,
     models: { [agent]: model.choice.value ?? null },
   }, target);
-  await tui.render({
-    _state: { stage: 'complete', agent, model: model.choice.value },
-    blocks: [
-      { divider: 'MARKED IS READY' },
-      { text: `✓ Setup complete\n\nRuntime  ${agent}\nModel    ${model.choice.value || 'default'}\nConfig   ${target}\n\nPress n to ask your first question.` },
-    ],
-  });
+  // Reset to the desk: the splash is the home screen, and a setup summary the
+  // user cannot act on is a worse landing than the commands they came for.
+  await tui.notice(`Marked is ready · ${agent}${model.choice.value ? ` · ${model.choice.value}` : ''} · press n to ask`);
   return { agent, model: model.choice.value ?? null, target };
 }

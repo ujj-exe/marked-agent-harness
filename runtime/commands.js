@@ -9,8 +9,25 @@ const DEFAULTS = {
   futures: 'Analyze current Indian futures positioning across NIFTY, rates and commodities.',
 };
 
-const COMMANDS = new Set(['analyst', 'compare', 'macro', 'sector', 'desk', 'risk', 'options', 'futures', 'watch', 'portfolio']);
-const ROUTES = { macro: 'macro', sector: 'sector', desk: 'desk', risk: 'risk', options: 'derivatives', futures: 'derivatives', watch: 'watch', portfolio: 'portfolio' };
+/**
+ * The desk, and the only description of it. The splash grid, the `?` overlay
+ * and `marked --help` all read this list, so a command cannot be advertised
+ * in one place and missing from another.
+ */
+export const DESK = [
+  ['/analyst',  '<company>',   'filings, fundamentals, or any research question'],
+  ['/compare',  '<a> and <b>',           '2–5 names separated by and / vs / comma'],
+  ['/macro',    '',                      'RBI, inflation, growth — the regime behind the trade'],
+  ['/sector',   '<sector>',              'rotations, thematics, and the names moving money'],
+  ['/desk',     '<company>',             'market pulse · 3 seconds · everything that matters'],
+  ['/risk',     '<company>',             'event impact · catalyst timing · what could go wrong'],
+  ['/options',  '<symbol>',              'chains, OI skew, positioning — where smart money leans'],
+  ['/futures',  '<symbol>',              'commodities, rates futures — the cross-asset tape'],
+  ['/watch',    '<companies>',           'what moved · conviction logged'],
+];
+
+const COMMANDS = new Set(DESK.map(([name]) => name.slice(1)));
+const ROUTES = { macro: 'macro', sector: 'sector', desk: 'desk', risk: 'risk', options: 'derivatives', futures: 'derivatives', watch: 'watch' };
 
 export function parseDeskCommand(input) {
   const match = String(input).trim().match(/^\/([a-z]+)(?:\s+([\s\S]*))?$/i);
@@ -30,7 +47,6 @@ export function parseDeskCommand(input) {
       : error(command, 'Usage: /compare <company> and <company> · supports 2–5 companies');
   }
   if (command === 'watch' && !args) return error(command, 'Usage: /watch <companies or watchlist question>');
-  if (command === 'portfolio' && !args) return error(command, 'Usage: /portfolio <holdings, weights, or portfolio question>');
 
   const query = args ? {
     macro: `Analyze Indian macro conditions: ${args}`,
@@ -40,10 +56,9 @@ export function parseDeskCommand(input) {
     options: `Analyze Indian options positioning: ${args}`,
     futures: `Analyze Indian futures positioning: ${args}`,
     watch: `Watchlist update for: ${args}`,
-    portfolio: `Analyze this Indian portfolio: ${args}`,
   }[command] : DEFAULTS[command];
   // Commands that take a company scope it explicitly; macro and sector do not.
-  const SCOPED = new Set(['desk', 'risk', 'watch', 'options', 'futures', 'portfolio']);
+  const SCOPED = new Set(['desk', 'risk', 'watch', 'options', 'futures']);
   const references = args && SCOPED.has(command) ? [args] : [];
   return result(command, query, { kind: ROUTES[command], references });
 }

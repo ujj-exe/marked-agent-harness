@@ -12,6 +12,7 @@ import { paintWithScroll } from './render.js';
 
 let _mouseInputActive = false;
 let _lastEscapeMs = 0;
+let _mouseReportMs = 0;
 
 /**
  * Returns true if ANY escape sequence was received within the last 300ms.
@@ -19,6 +20,19 @@ let _lastEscapeMs = 0;
  */
 export function isMouseRecent() {
   return Date.now() - _lastEscapeMs < 300;
+}
+
+/**
+ * True while readline is still emitting the characters of a mouse report.
+ *
+ * A click arrives as one chunk (\x1b[<0;42;13M) which readline decodes into
+ * separate keypresses — the coordinates land in whatever field is open as
+ * stray digits and semicolons. This data handler runs before readline's
+ * emitter, so the whole burst falls inside a window far shorter than any
+ * human keystroke.
+ */
+export function isMouseSequenceActive() {
+  return Date.now() - _mouseReportMs < 50;
 }
 
 export function setupMouseWheel() {
@@ -30,6 +44,7 @@ export function setupMouseWheel() {
     if (str.includes('\x1b[')) {
       _lastEscapeMs = Date.now();
     }
+    if (/\x1b\[<\d*/.test(str)) _mouseReportMs = Date.now();
     const match = str.match(/\x1b\[<(\d+);\d+;\d+[Mm]/);
     if (!match || !tui.lastContent) return;
     const btn = parseInt(match[1], 10);

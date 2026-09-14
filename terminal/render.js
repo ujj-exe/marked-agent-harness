@@ -5,6 +5,7 @@
  * Sticky header + scrollable body + scroll indicator + footer.
  */
 
+import { DESK } from '../runtime/commands.js';
 import { BRAND, BOLD, DIM, RESET, LIME_D, LIME_M, LABEL, REPORTS_DIR, tui } from './state.js';
 import { visLen, ansiTrunc } from '../src/index.js';
 import { renderBlocks, presetToBlocks } from './engine.js';
@@ -62,7 +63,7 @@ export function renderHelpOverlay(width) {
   }
 
   const sep = `${DIM}${'─'.repeat(width)}${RESET}`;
-  const K = (key, desc) => `  ${BRAND}${key.padEnd(14)}${RESET}${DIM}${desc}${RESET}`;
+  const K = (key, desc) => `  ${BRAND}${key.padEnd(26)}${RESET}${DIM}${desc}${RESET}`;
 
   const lines = [
     '',
@@ -87,11 +88,10 @@ export function renderHelpOverlay(width) {
     K('/new', 'Start a fresh conversation'),
     K('/model', 'Pick the reasoning provider and model'),
     K('/model claude opus', 'Set provider and model without the picker'),
-    K('/analyst <query>', 'Company deep-dive or semantic research question'),
-    K('/compare A and B', 'Compare 2–5 companies; and, vs or comma-separated'),
-    K('/macro · /sector', 'Macro, sector, desk and risk research shortcuts'),
-    K('/options <symbol>', 'Options, futures, watch and portfolio shortcuts'),
     K('1-9', 'Run a follow-up query'),
+    '',
+    `  ${BRAND}${BOLD}THE TEAM${RESET}`,
+    ...DESK.map(([name, arg, desc]) => K(`${name}${arg ? ` ${arg}` : ''}`, desc)),
     '',
     `  ${BRAND}${BOLD}DISPLAY${RESET}`,
     K('?', 'Toggle this help'),
@@ -112,8 +112,8 @@ export function renderHelpOverlay(width) {
 // Commands the runtime recognises. A slash word outside this list stays plain,
 // so the colour is a statement that the command will actually fire.
 const DESK_COMMANDS = new Set([
-  'analyst', 'compare', 'macro', 'sector', 'desk', 'risk', 'options', 'futures',
-  'watch', 'portfolio', 'marked', 'model', 'new', 'history',
+  ...DESK.map(([name]) => name.slice(1)),
+  'marked', 'model', 'new', 'history', 'help',
 ]);
 
 /** Light up a recognised leading command so it reads as activated. */

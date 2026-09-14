@@ -16,7 +16,7 @@ export function classifyOutputMode(question, intent = {}, plan = {}) {
   if (intent.kind === 'sector' || /\b(?:screen|which companies|top stocks|leaders|laggards|find companies|universe)\b/.test(text) || plan.route === 'filter') return 'screening';
   if (intent.kind === 'watch' || /\b(?:filing|announcement|dividend|bonus|split|buyback|event|what happened)\b/.test(text)) return 'event';
   if (intent.kind === 'desk') return 'research';
-  if (['risk', 'derivatives', 'portfolio'].includes(intent.kind)) return 'analytical';
+  if (['risk', 'derivatives'].includes(intent.kind)) return 'analytical';
   if (/\b(?:analy[sz]e|quality|why|drivers?|outlook|evaluate|assess|risk|valuation|deep dive)\b/.test(text)) return 'analytical';
   if (/\b(?:research|overview|fundamentals|what should i know|tell me about)\b/.test(text)) return 'research';
   return 'factual';

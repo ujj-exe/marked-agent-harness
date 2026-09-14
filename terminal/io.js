@@ -8,7 +8,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { BRAND, BOLD, DIM, RESET, REPORTS_DIR, tui } from './state.js';
-import { emitter } from './server.js';
+import { emitter, connectedAgent } from './server.js';
 
 // ── HTTP helpers (no external deps) ─────────────────────────────────────────
 
@@ -57,17 +57,17 @@ export function httpPost(url, body) {
  * until the Marked runtime connects via POST /render.
  */
 export async function healthCheck() {
+  // The probe is slower than /connect, so landing late must not stamp
+  // "Waiting for Marked API" over a runtime that is already attached.
+  if (connectedAgent()) return;
   let markedUp = false;
   try {
     const response = await fetch('https://api.marked.run/v1/');
     markedUp = response.status !== 401 && response.status < 500;
   } catch { markedUp = false; }
 
-  if (markedUp) {
-    emitter.emit('_splash', { msg: 'Waiting for Marked runtime' });
-  } else {
-    emitter.emit('_splash', { msg: 'Waiting for Marked API' });
-  }
+  if (connectedAgent()) return;
+  emitter.emit('_splash', { msg: markedUp ? 'Waiting for Marked runtime' : 'Waiting for Marked API' });
 }
 
 export async function submitQuery(question) {

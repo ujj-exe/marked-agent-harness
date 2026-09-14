@@ -7,6 +7,7 @@
 
 import { BRAND, BOLD, DIM, RESET, LABEL, VERSION } from './state.js';
 import { LOGO_B, WORDMARK, WORDMARK_WIDTH } from './logo.js';
+import { DESK } from '../runtime/commands.js';
 
 // Pulse: ▐██ breathes lime → bright-white → lime → dim → recover
 export const PULSE_COLORS = [
@@ -21,21 +22,7 @@ export const PULSE_COLORS = [
 
 export const SPINNER_FRAMES = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
 
-// name, what it expects after the slash, what it does. The argument shape is
-// shown because a command whose input you have to guess is a command you get
-// wrong once and stop using.
-export const DESK = [
-  ['/analyst',   '<company>',            'filings, fundamentals, or any research question'],
-  ['/compare',   '<a> and <b>',          '2–5 names separated by and / vs / comma'],
-  ['/macro',     '',                     'RBI, inflation, growth — the regime behind the trade'],
-  ['/sector',    '<sector>',             'rotations, thematics, and the names moving money'],
-  ['/desk',      '<company>',            'market pulse · 3 seconds · everything that matters'],
-  ['/risk',      '<company>',            'event impact · catalyst timing · what could go wrong'],
-  ['/options',   '<symbol>',             'chains, OI skew, positioning — where smart money leans'],
-  ['/futures',   '<symbol>',             'commodities, rates futures — the cross-asset tape'],
-  ['/watch',     '<companies>',          'what moved · conviction logged'],
-  ['/portfolio', '<holdings + weights>', 'allocation · concentration risk'],
-];
+export { DESK };
 
 export const RUNTIME_AGENTS = ['marked', 'claude', 'codex', 'openai-codex'];
 
@@ -84,7 +71,7 @@ export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
     // Two-column: desk left, runtime workers + version right
     const colW = Math.floor(width / 2) - 2;
     lines.push(L(
-      `  ${BRAND}${BOLD}THE DESK${RESET}  ${DIM}every seat takes a position${RESET}`,
+      `  ${BRAND}${BOLD}THE TEAM${RESET}  ${DIM}every seat takes a position${RESET}`,
       `${DIM}RUNTIME WORKERS${RESET}  `,
     ));
     const runtimeW = 'RUNTIME WORKERS'.length; // match header width
@@ -124,7 +111,7 @@ export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
     lines.push(L(`  ${mark}  ${BRAND}${BOLD}MARKED${RESET}`, `  ${vStr}  `));
     lines.push(`  ${DIM}marked.run  ·  India-first financial intelligence${RESET}`);
     lines.push(sep());
-    lines.push(`  ${BRAND}${BOLD}THE DESK${RESET}`);
+    lines.push(`  ${BRAND}${BOLD}THE TEAM${RESET}`);
     DESK.forEach(([name, arg, desc]) => {
       lines.push(`  ${BRAND}${name.padEnd(11)}${RESET}${LABEL}${(arg || '').padEnd(11)}${RESET}${DIM}${desc}${RESET}`);
     });

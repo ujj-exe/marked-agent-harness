@@ -1120,6 +1120,9 @@ var VALID_THEMES = /* @__PURE__ */ new Set([
   "marked"
 ]);
 var emitter = new EventEmitter();
+function connectedAgent() {
+  return _agentSession;
+}
 emitter.setMaxListeners(20);
 var _server = null;
 var _handlersRegistered = false;
@@ -3802,6 +3805,72 @@ var WORDMARK_ROWS = [
 var WORDMARK_WIDTH = WORDMARK_ROWS[0].length;
 var WORDMARK = WORDMARK_ROWS.map((row) => row.replace(/\u2588+|[^\u2588 ]+/g, (run) => (run[0] === "\u2588" ? BRAND2 + BOLD3 : LIME_D2) + run + RESET3));
 
+// config/models.js
+init_paths();
+import fs4 from "node:fs";
+import os2 from "node:os";
+import path4 from "node:path";
+var AGENTS = ["claude", "codex", "openai-codex"];
+var CODEX_MODELS_CACHE = path4.join(os2.homedir(), ".codex", "models_cache.json");
+var CLAUDE_MODELS = [
+  { id: "opus", label: "Opus \u2014 deepest reasoning" },
+  { id: "fable", label: "Fable \u2014 fast frontier" },
+  { id: "sonnet", label: "Sonnet \u2014 balanced" },
+  { id: "haiku", label: "Haiku \u2014 cheapest" }
+];
+var CODEX_FALLBACK = [
+  "gpt-6-astra",
+  "gpt-reserve",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-daybreak-blue-latest",
+  "gpt-5.5"
+].map((id) => ({ id, label: id }));
+var VALID_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+function modelsFor(agent) {
+  const models = agent === "claude" ? CLAUDE_MODELS : codexModels();
+  return [
+    { id: null, label: `Default (whatever ${agent} is configured to use)` },
+    ...models.filter((model) => VALID_ID.test(model.id))
+  ];
+}
+function listModels() {
+  return AGENTS.flatMap((agent) => modelsFor(agent).map((model) => ({ agent, ...model })));
+}
+function currentModel() {
+  let file = {};
+  try {
+    file = JSON.parse(fs4.readFileSync(configPath(), "utf8"));
+  } catch {
+  }
+  const agent = process.env.MARKED_AGENT || file.agent || "codex";
+  return { agent, model: process.env.MARKED_MODEL || file.models?.[agent] || null };
+}
+function codexModels() {
+  try {
+    const cache = JSON.parse(fs4.readFileSync(CODEX_MODELS_CACHE, "utf8"));
+    const models = (Array.isArray(cache.models) ? cache.models : []).filter((model) => model?.visibility === "list" && typeof model.slug === "string").sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999)).map((model) => ({ id: model.slug, label: String(model.display_name || model.slug).slice(0, 60) }));
+    return models.length ? models : CODEX_FALLBACK;
+  } catch {
+    return CODEX_FALLBACK;
+  }
+}
+
+// runtime/commands.js
+var DESK = [
+  ["/analyst", "<company>", "filings, fundamentals, or any research question"],
+  ["/compare", "<a> and <b>", "2\u20135 names separated by and / vs / comma"],
+  ["/macro", "", "RBI, inflation, growth \u2014 the regime behind the trade"],
+  ["/sector", "<sector>", "rotations, thematics, and the names moving money"],
+  ["/desk", "<company>", "market pulse \xB7 3 seconds \xB7 everything that matters"],
+  ["/risk", "<company>", "event impact \xB7 catalyst timing \xB7 what could go wrong"],
+  ["/options", "<symbol>", "chains, OI skew, positioning \u2014 where smart money leans"],
+  ["/futures", "<symbol>", "commodities, rates futures \u2014 the cross-asset tape"],
+  ["/watch", "<companies>", "what moved \xB7 conviction logged"]
+];
+var COMMANDS = new Set(DESK.map(([name]) => name.slice(1)));
+
 // terminal/splash.js
 var PULSE_COLORS = [
   "\x1B[38;2;192;255;0m",
@@ -3813,18 +3882,6 @@ var PULSE_COLORS = [
   "\x1B[38;2;192;255;0m"
 ];
 var SPINNER_FRAMES = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
-var DESK = [
-  ["/analyst", "<company>", "filings, fundamentals, or any research question"],
-  ["/compare", "<a> and <b>", "2\u20135 names separated by and / vs / comma"],
-  ["/macro", "", "RBI, inflation, growth \u2014 the regime behind the trade"],
-  ["/sector", "<sector>", "rotations, thematics, and the names moving money"],
-  ["/desk", "<company>", "market pulse \xB7 3 seconds \xB7 everything that matters"],
-  ["/risk", "<company>", "event impact \xB7 catalyst timing \xB7 what could go wrong"],
-  ["/options", "<symbol>", "chains, OI skew, positioning \u2014 where smart money leans"],
-  ["/futures", "<symbol>", "commodities, rates futures \u2014 the cross-asset tape"],
-  ["/watch", "<companies>", "what moved \xB7 conviction logged"],
-  ["/portfolio", "<holdings + weights>", "allocation \xB7 concentration risk"]
-];
 var RUNTIME_AGENTS = ["marked", "claude", "codex", "openai-codex"];
 function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
   const pc2 = PULSE_COLORS[pulseFrame % PULSE_COLORS.length];
@@ -3855,7 +3912,7 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
     lines.push("");
     const colW = Math.floor(width / 2) - 2;
     lines.push(L(
-      `  ${BRAND}${BOLD2}THE DESK${RESET2}  ${DIM2}every seat takes a position${RESET2}`,
+      `  ${BRAND}${BOLD2}THE TEAM${RESET2}  ${DIM2}every seat takes a position${RESET2}`,
       `${DIM2}RUNTIME WORKERS${RESET2}  `
     ));
     const runtimeW = "RUNTIME WORKERS".length;
@@ -3888,7 +3945,7 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
     lines.push(L(`  ${mark}  ${BRAND}${BOLD2}MARKED${RESET2}`, `  ${vStr}  `));
     lines.push(`  ${DIM2}marked.run  \xB7  India-first financial intelligence${RESET2}`);
     lines.push(sep());
-    lines.push(`  ${BRAND}${BOLD2}THE DESK${RESET2}`);
+    lines.push(`  ${BRAND}${BOLD2}THE TEAM${RESET2}`);
     DESK.forEach(([name, arg, desc]) => {
       lines.push(`  ${BRAND}${name.padEnd(11)}${RESET2}${LABEL}${(arg || "").padEnd(11)}${RESET2}${DIM2}${desc}${RESET2}`);
     });
@@ -4619,7 +4676,7 @@ function renderHelpOverlay(width) {
     return `${DIM2}n query  \u2191\u2193 scroll  Tab focus  s save  l load  ? close  q quit${RESET2}`;
   }
   const sep = `${DIM2}${"\u2500".repeat(width)}${RESET2}`;
-  const K = (key, desc) => `  ${BRAND}${key.padEnd(14)}${RESET2}${DIM2}${desc}${RESET2}`;
+  const K = (key, desc) => `  ${BRAND}${key.padEnd(26)}${RESET2}${DIM2}${desc}${RESET2}`;
   const lines = [
     "",
     `  ${BRAND}${BOLD2}MARKED${RESET2}  ${DIM2}Keyboard Reference${RESET2}`,
@@ -4643,11 +4700,10 @@ function renderHelpOverlay(width) {
     K("/new", "Start a fresh conversation"),
     K("/model", "Pick the reasoning provider and model"),
     K("/model claude opus", "Set provider and model without the picker"),
-    K("/analyst <query>", "Company deep-dive or semantic research question"),
-    K("/compare A and B", "Compare 2\u20135 companies; and, vs or comma-separated"),
-    K("/macro \xB7 /sector", "Macro, sector, desk and risk research shortcuts"),
-    K("/options <symbol>", "Options, futures, watch and portfolio shortcuts"),
     K("1-9", "Run a follow-up query"),
+    "",
+    `  ${BRAND}${BOLD2}THE TEAM${RESET2}`,
+    ...DESK.map(([name, arg, desc]) => K(`${name}${arg ? ` ${arg}` : ""}`, desc)),
     "",
     `  ${BRAND}${BOLD2}DISPLAY${RESET2}`,
     K("?", "Toggle this help"),
@@ -4664,20 +4720,12 @@ function renderHelpOverlay(width) {
   return lines.join("\n");
 }
 var DESK_COMMANDS = /* @__PURE__ */ new Set([
-  "analyst",
-  "compare",
-  "macro",
-  "sector",
-  "desk",
-  "risk",
-  "options",
-  "futures",
-  "watch",
-  "portfolio",
+  ...DESK.map(([name]) => name.slice(1)),
   "marked",
   "model",
   "new",
-  "history"
+  "history",
+  "help"
 ]);
 function highlightCommand(value) {
   const match = String(value).match(/^\/([a-z]+)(\b[\s\S]*)?$/i);
@@ -4961,8 +5009,12 @@ function paintWithScroll(clear = true) {
 // terminal/scroll.js
 var _mouseInputActive = false;
 var _lastEscapeMs = 0;
+var _mouseReportMs = 0;
 function isMouseRecent() {
   return Date.now() - _lastEscapeMs < 300;
+}
+function isMouseSequenceActive() {
+  return Date.now() - _mouseReportMs < 50;
 }
 function setupMouseWheel() {
   if (_mouseInputActive) return;
@@ -4972,6 +5024,7 @@ function setupMouseWheel() {
     if (str.includes("\x1B[")) {
       _lastEscapeMs = Date.now();
     }
+    if (/\x1b\[<\d*/.test(str)) _mouseReportMs = Date.now();
     const match = str.match(/\x1b\[<(\d+);\d+;\d+[Mm]/);
     if (!match || !tui.lastContent) return;
     const btn = parseInt(match[1], 10);
@@ -4987,9 +5040,10 @@ function setupMouseWheel() {
 
 // terminal/io.js
 import http2 from "http";
-import fs4 from "fs";
-import path4 from "path";
+import fs5 from "fs";
+import path5 from "path";
 async function healthCheck() {
+  if (connectedAgent()) return;
   let markedUp = false;
   try {
     const response = await fetch("https://api.marked.run/v1/");
@@ -4997,11 +5051,8 @@ async function healthCheck() {
   } catch {
     markedUp = false;
   }
-  if (markedUp) {
-    emitter.emit("_splash", { msg: "Waiting for Marked runtime" });
-  } else {
-    emitter.emit("_splash", { msg: "Waiting for Marked API" });
-  }
+  if (connectedAgent()) return;
+  emitter.emit("_splash", { msg: markedUp ? "Waiting for Marked runtime" : "Waiting for Marked API" });
 }
 async function submitQuery(question) {
   const runtimeUrl = process.env.MARKED_RUNTIME_URL;
@@ -5016,13 +5067,13 @@ async function submitQuery(question) {
 function saveReport() {
   if (!tui.lastBlocks) return null;
   try {
-    fs4.mkdirSync(REPORTS_DIR, { recursive: true });
+    fs5.mkdirSync(REPORTS_DIR, { recursive: true });
     const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 16);
     const textBlock = tui.lastBlocks.find((b) => b.text);
     const ticker = textBlock?.text?.match(/·\s+([A-Z/]+)/)?.[1]?.replace(/\s/g, "-") ?? "report";
     const filename = `${ts}-${ticker}.json`;
-    fs4.writeFileSync(
-      path4.join(REPORTS_DIR, filename),
+    fs5.writeFileSync(
+      path5.join(REPORTS_DIR, filename),
       JSON.stringify({ blocks: tui.lastBlocks, meta: tui.renderMeta, saved_at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)
     );
     return filename;
@@ -5032,62 +5083,10 @@ function saveReport() {
 }
 function listReports() {
   try {
-    if (!fs4.existsSync(REPORTS_DIR)) return [];
-    return fs4.readdirSync(REPORTS_DIR).filter((f) => f.endsWith(".json")).sort().reverse().slice(0, 20);
+    if (!fs5.existsSync(REPORTS_DIR)) return [];
+    return fs5.readdirSync(REPORTS_DIR).filter((f) => f.endsWith(".json")).sort().reverse().slice(0, 20);
   } catch {
     return [];
-  }
-}
-
-// config/models.js
-init_paths();
-import fs5 from "node:fs";
-import os2 from "node:os";
-import path5 from "node:path";
-var AGENTS = ["claude", "codex", "openai-codex"];
-var CODEX_MODELS_CACHE = path5.join(os2.homedir(), ".codex", "models_cache.json");
-var CLAUDE_MODELS = [
-  { id: "opus", label: "Opus \u2014 deepest reasoning" },
-  { id: "fable", label: "Fable \u2014 fast frontier" },
-  { id: "sonnet", label: "Sonnet \u2014 balanced" },
-  { id: "haiku", label: "Haiku \u2014 cheapest" }
-];
-var CODEX_FALLBACK = [
-  "gpt-6-astra",
-  "gpt-reserve",
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "gpt-5.6-luna",
-  "gpt-daybreak-blue-latest",
-  "gpt-5.5"
-].map((id) => ({ id, label: id }));
-var VALID_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-function modelsFor(agent) {
-  const models = agent === "claude" ? CLAUDE_MODELS : codexModels();
-  return [
-    { id: null, label: `Default (whatever ${agent} is configured to use)` },
-    ...models.filter((model) => VALID_ID.test(model.id))
-  ];
-}
-function listModels() {
-  return AGENTS.flatMap((agent) => modelsFor(agent).map((model) => ({ agent, ...model })));
-}
-function currentModel() {
-  let file = {};
-  try {
-    file = JSON.parse(fs5.readFileSync(configPath(), "utf8"));
-  } catch {
-  }
-  const agent = process.env.MARKED_AGENT || file.agent || "codex";
-  return { agent, model: process.env.MARKED_MODEL || file.models?.[agent] || null };
-}
-function codexModels() {
-  try {
-    const cache = JSON.parse(fs5.readFileSync(CODEX_MODELS_CACHE, "utf8"));
-    const models = (Array.isArray(cache.models) ? cache.models : []).filter((model) => model?.visibility === "list" && typeof model.slug === "string").sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999)).map((model) => ({ id: model.slug, label: String(model.display_name || model.slug).slice(0, 60) }));
-    return models.length ? models : CODEX_FALLBACK;
-  } catch {
-    return CODEX_FALLBACK;
   }
 }
 
@@ -5138,11 +5137,16 @@ function openInput(input) {
   tui.inputSecret = Boolean(input.secret);
   tui.inputStep = input.step || null;
   tui.inputMode = true;
+  setMouseReporting(false);
   tui.phase = "live";
   stopSplashAnimation();
   process.stdout.write("\x1B[2J\x1B[H" + renderInputOverlay(getWidth()) + "\x1B[?25h");
 }
+function setMouseReporting(on) {
+  process.stdout.write(on ? "\x1B[?1000h\x1B[?1006h" : "\x1B[?1006l\x1B[?1000l");
+}
 function closeInput() {
+  setMouseReporting(true);
   tui.inputMode = false;
   tui.inputValue = "";
   tui.inputSecret = false;
@@ -5242,6 +5246,7 @@ function onSplash(payload) {
 function showQueryInput() {
   if (tui.agentState?.stage === "gathering" || tui.agentState?.stage === "analyzing") return;
   stopSplashAnimation();
+  setMouseReporting(false);
   tui.queryInput = "";
   if (tui.phase === "splash") {
     process.stdout.write("\x1B[2J\x1B[H" + renderSplash(tui.splashMsg, getWidth(), 0, getHeight()));
@@ -5249,6 +5254,7 @@ function showQueryInput() {
   drawQueryPrompt();
 }
 function cancelQueryInput() {
+  setMouseReporting(true);
   tui.queryInput = null;
   process.stdout.write("\x1B[?25l");
   if (tui.phase === "splash") startSplashAnimation();
@@ -5290,6 +5296,7 @@ function closeModelPicker() {
   startSplashAnimation();
 }
 async function sendQueryInput() {
+  setMouseReporting(true);
   const question = tui.queryInput.trim();
   tui.queryInput = null;
   if (!question) return cancelQueryInput();
@@ -5376,6 +5383,7 @@ function handleKeypress(ch, key) {
   if (key.ctrl && key.name === "c") {
     process.exit(0);
   }
+  if (isMouseSequenceActive()) return;
   if (tui.inputMode) {
     if (key.name === "escape") {
       closeInput();
@@ -5582,14 +5590,14 @@ function handleKeypress(ch, key) {
   if (ch === "q") {
     stopRenderAnimation();
     tui.lastContent = "";
-    const connectedAgent = tui.agentState?.agent;
+    const connectedAgent2 = tui.agentState?.agent;
     const connectedModel = tui.agentState?.model;
-    tui.agentState = connectedAgent ? { agent: connectedAgent, model: connectedModel } : null;
+    tui.agentState = connectedAgent2 ? { agent: connectedAgent2, model: connectedModel } : null;
     tui.renderMeta = { model: null, tools: null, cost: null, as_of: null };
     tui.blocks = null;
     tui.phase = "splash";
     const hint = tui.lastBlocks ? "Enter restore \xB7 l load" : "l load";
-    const connLabel = connectedAgent ? `Connected \xB7 ${connectedModel ? `${connectedAgent} \xB7 ${connectedModel}` : connectedAgent}` : "Waiting for agent";
+    const connLabel = connectedAgent2 ? `Connected \xB7 ${connectedModel ? `${connectedAgent2} \xB7 ${connectedModel}` : connectedAgent2}` : "Waiting for agent";
     tui.splashMsg = `${connLabel} \xB7 ${hint}`;
     startSplashAnimation();
     return;
@@ -5635,7 +5643,7 @@ function setupResize() {
 async function main() {
   try {
     const { port } = await startServer();
-    process.stderr.write(`Marked Terminal on port ${port}
+    if (process.env.MARKED_DEBUG) process.stderr.write(`Marked Terminal on port ${port}
 `);
   } catch (err) {
     process.stderr.write(`Failed to start: ${err.message}
@@ -5679,6 +5687,13 @@ Unhandled rejection: ${err}
   emitter.on("clear", onClear);
   emitter.on("_splash", onSplash);
   emitter.on("_live", onLive);
+  const attached = connectedAgent();
+  if (attached) {
+    onSplash({
+      msg: `Connected \xB7 ${attached.model ? `${attached.agent} \xB7 ${attached.model}` : attached.agent}`,
+      agent: attached
+    });
+  }
   startSplashAnimation();
   healthCheck().catch(() => {
   });
@@ -5689,3 +5704,6 @@ ${err.stack}
 `);
   process.exit(1);
 });
+export {
+  setMouseReporting
+};

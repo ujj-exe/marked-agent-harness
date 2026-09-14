@@ -26,7 +26,7 @@
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
-import { startServer, emitter } from './server.js';
+import { startServer, connectedAgent, emitter } from './server.js';
 import { logStateTransition } from './debugLog.js';
 import { setTheme } from '../src/index.js';
 
@@ -35,7 +35,7 @@ import { setTheme } from '../src/index.js';
 import { BRAND, DIM, RESET, REPORTS_DIR, tui, getBlockType, applyPatch } from './state.js';
 import { renderSplash, PULSE_COLORS, SPINNER_FRAMES } from './splash.js';
 import { runLayout, buildFooter, renderLoadOverlay, renderModelOverlay, renderAskOverlay, renderInputOverlay, renderHelpOverlay, renderQueryOverlay, focusIndicator, paintScreen, paintWithScroll, startRenderAnimation, stopRenderAnimation } from './render.js';
-import { setupMouseWheel, isMouseRecent } from './scroll.js';
+import { setupMouseWheel, isMouseRecent, isMouseSequenceActive } from './scroll.js';
 import { healthCheck, saveReport, listReports, submitQuery } from './io.js';
 import { currentModel, listModels } from '../config/models.js';
 
@@ -100,12 +100,19 @@ function openInput(input) {
   tui.inputSecret = Boolean(input.secret);
   tui.inputStep = input.step || null;
   tui.inputMode = true;
+  setMouseReporting(false);
   tui.phase = 'live';
   stopSplashAnimation();
   process.stdout.write('\x1b[2J\x1b[H' + renderInputOverlay(getWidth()) + '\x1b[?25h');
 }
 
+/** Wheel scrolling is worth reports; a text field is not. */
+export function setMouseReporting(on) {
+  process.stdout.write(on ? '\x1b[?1000h\x1b[?1006h' : '\x1b[?1006l\x1b[?1000l');
+}
+
 function closeInput() {
+  setMouseReporting(true);
   tui.inputMode = false;
   tui.inputValue = '';
   tui.inputSecret = false;
@@ -229,6 +236,7 @@ function onSplash(payload) {
 function showQueryInput() {
   if (tui.agentState?.stage === 'gathering' || tui.agentState?.stage === 'analyzing') return;
   stopSplashAnimation();
+  setMouseReporting(false);
   tui.queryInput = '';
   if (tui.phase === 'splash') {
     process.stdout.write('\x1b[2J\x1b[H' + renderSplash(tui.splashMsg, getWidth(), 0, getHeight()));
@@ -237,6 +245,7 @@ function showQueryInput() {
 }
 
 function cancelQueryInput() {
+  setMouseReporting(true);
   tui.queryInput = null;
   process.stdout.write('\x1b[?25l');
   if (tui.phase === 'splash') startSplashAnimation();
@@ -284,6 +293,7 @@ function closeModelPicker() {
 }
 
 async function sendQueryInput() {
+  setMouseReporting(true);
   const question = tui.queryInput.trim();
   tui.queryInput = null;
   if (!question) return cancelQueryInput();
@@ -379,6 +389,10 @@ function handleKeypress(ch, key) {
   if (key.ctrl && key.name === 'c') {
     process.exit(0);
   }
+
+  // A click is not a keystroke. Without this the coordinates in the mouse
+  // report are typed into whatever field is open.
+  if (isMouseSequenceActive()) return;
 
   if (tui.inputMode) {
     if (key.name === 'escape') {
@@ -669,7 +683,9 @@ function setupResize() {
 async function main() {
   try {
     const { port } = await startServer();
-    process.stderr.write(`Marked Terminal on port ${port}\n`);
+    // Printed above the alt screen, this line survives as a stray row across
+    // the UI. It is a debugging aid, not part of the terminal.
+    if (process.env.MARKED_DEBUG) process.stderr.write(`Marked Terminal on port ${port}\n`);
   } catch (err) {
     process.stderr.write(`Failed to start: ${err.message}\n`);
     process.exit(1);
@@ -708,6 +724,17 @@ async function main() {
   emitter.on('clear', onClear);
   emitter.on('_splash', onSplash);
   emitter.on('_live', onLive);
+
+  // The server answers /connect before this point, so a runtime that attaches
+  // during startup emits into an empty bus and the UI never learns it is
+  // connected. Reconcile once, now that the listeners exist.
+  const attached = connectedAgent();
+  if (attached) {
+    onSplash({
+      msg: `Connected · ${attached.model ? `${attached.agent} · ${attached.model}` : attached.agent}`,
+      agent: attached,
+    });
+  }
 
   // Start splash
   startSplashAnimation();
