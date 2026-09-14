@@ -329,6 +329,20 @@ with its own procedure.
 
 Plain questions work too. The commands are shortcuts, not a required syntax.
 
+Screens are their own shape and need no company at all:
+
+```
+which companies have net margin above 10% and revenue growth above 20% in FY2025
+```
+
+A screen is detected before entity extraction runs, because it is the one
+question that names no company and an extractor with nothing to find will reach
+for whatever nouns are present. Thresholds written as bare numbers are read as
+percentages, since nobody asks for a margin above 0.1, and a metric named
+without a threshold is reported rather than screened on. Matches whose ratios
+fall outside any plausible range are withheld: a near-zero denominator produces
+a margin of 19,800%, and a screen sorts precisely those to the top.
+
 `/analyst` is not a prompt wrapper. It resolves the reference to one canonical
 company and stops on ambiguity, fixes `as_of`, defaults to consolidated and
 refuses to mix basis silently, walks multi-year statements, margins, debt,

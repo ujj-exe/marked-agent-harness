@@ -1,6 +1,7 @@
 import { conceptMatches, extractConcepts, isDerived, isInstant, REPORTED_CONCEPTS } from '../data/concepts.js';
 import { selectEquity } from '../data/marked-client.js';
 import { validateFinancialFacts } from '../data/evidence.js';
+import { parseScreen } from './screen.js';
 
 // The data plan is the runtime's own answer to "what has to be true before a
 // reasoning worker is allowed to see this question". It is built locally from
@@ -126,15 +127,22 @@ export function buildDataPlan(question, { temporal = null, asOf = null, declared
   ])];
   const fiscalYears = extractFiscalYears(text, temporal);
   // A slash command states its subject outright. Extraction is for prose.
-  const references = declared?.references?.length ? declared.references : extractEntities(text);
-  const route = classifyRoute(text, { concepts, references });
+  // A screen names no company, so entity extraction has nothing to find and
+  // will reach for whatever nouns are present -- which is how "FII" and "DII"
+  // became company lookups. Decide the shape first, then skip extraction.
+  const screen = parseScreen(text);
+  const references = screen
+    ? []
+    : (declared?.references?.length ? declared.references : extractEntities(text));
+  const route = screen ? 'screen' : classifyRoute(text, { concepts, references });
   // What decides macro is the reference, not the prose around it. "RBI" and
   // "NIFTY" are references that are not companies; "asian paints" is a company
   // even when the sentence says "India-market risks", and testing the sentence
   // sent that one to search with a perfectly good plan in hand.
   const entity = references[0];
   const MACRO_INTENTS = new Set(['macro', 'sector', 'derivatives']);
-  const subject = declared?.kind && MACRO_INTENTS.has(declared.kind) && !declared.references?.length
+  const subject = screen ? 'universe'
+    : declared?.kind && MACRO_INTENTS.has(declared.kind) && !declared.references?.length
     ? 'macro'
     : entity
       ? (MACRO.test(entity) && !concepts.length ? 'macro' : 'company')
@@ -154,7 +162,8 @@ export function buildDataPlan(question, { temporal = null, asOf = null, declared
 
   return {
     route,
-    subject,
+    screen,
+    subject: screen ? 'universe' : subject,
     question: text,
     intent: route === 'financial_analysis' ? 'financial_analysis' : route,
     references,

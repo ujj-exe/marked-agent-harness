@@ -2,6 +2,7 @@
 // to follow it, or an analysis packet of forty facts renders under a FACTUAL
 // heading that tells the worker to answer in one line and leave risks empty.
 const ROUTE_MODES = {
+  screen: 'screening',
   financial_analysis: 'analytical',
   comparison: 'comparative',
   financial_metric_lookup: 'factual',
@@ -13,7 +14,7 @@ export function classifyOutputMode(question, intent = {}, plan = {}) {
   if (ROUTE_MODES[plan.route]) return ROUTE_MODES[plan.route];
   const text = String(question).toLowerCase();
   if (intent.kind === 'compare' || /\b(?:compare|versus|vs\.?|difference between)\b/.test(text)) return 'comparative';
-  if (intent.kind === 'sector' || /\b(?:screen|which companies|top stocks|leaders|laggards|find companies|universe)\b/.test(text) || plan.route === 'filter') return 'screening';
+  if (intent.kind === 'sector' || /\b(?:screen|which companies|top stocks|leaders|laggards|find companies|universe)\b/.test(text) || plan.route === 'screen') return 'screening';
   if (intent.kind === 'watch' || /\b(?:filing|announcement|dividend|bonus|split|buyback|event|what happened)\b/.test(text)) return 'event';
   if (intent.kind === 'desk') return 'research';
   if (['risk', 'derivatives'].includes(intent.kind)) return 'analytical';

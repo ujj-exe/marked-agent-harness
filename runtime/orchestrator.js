@@ -6,6 +6,7 @@ import { classifyIntent, looksLikeCompanyReference } from './intent.js';
 import { classifyOutputMode } from './mode.js';
 import { resolveTemporal, resolvedQuestion } from './temporal.js';
 import { buildDataPlan, derivedGrowth, executeDataPlan, flattenMetricRows, markedPlan, resolvePlan } from './plan.js';
+import { plausible } from './screen.js';
 import { planReviewSchema, postflightConcern, reviewPlan } from './plan-review.js';
 import { datasetCatalogue } from '../data/catalogue.js';
 import { selectEquity } from '../data/marked-client.js';
@@ -57,6 +58,12 @@ export class MarkedOrchestrator {
     const repairable = dataPlan.subject === 'company'
       && intent.kind !== 'company' && intent.kind !== 'compare';
     // A quote request needs no concepts and no review: fetch and answer.
+    // A screen is decided before retrieval because it is the one shape with no
+    // entity to resolve. Reaching the per-company path with no company is what
+    // turned "FII" into a lookup and returned a data gap.
+    if (dataPlan.route === 'screen' && this.data.screen) {
+      return this.runScreen(session, dataPlan.screen, { question, asOf, agentName, state, conversation, mode: session.mode });
+    }
     const priceOnly = dataPlan.route === 'price_lookup' || dataPlan.datasets?.includes('quote');
     if ((dataPlan.requires_facts || repairable || priceOnly) && this.data.financials && this.data.resolveCompany) {
       return this.runPlanned(session, dataPlan, { question, asOf, agentName, state, conversation, mode: session.mode, temporal: session.temporal });
@@ -403,6 +410,112 @@ export class MarkedOrchestrator {
         })),
       }, evidence,
       blocks: queryBlocks, totalTools: 1 + companyContexts.length, conversation, mode,
+    });
+  }
+
+  /**
+   * Structured discovery over the universe.
+   *
+   * Everything here is deliberately one call. A screen that fans out into a
+   * profile per match turns one question into fifty retrievals, and the user
+   * asked which companies qualify, not for fifty dossiers.
+   */
+  async runScreen(session, screen, { question, asOf, agentName, state, conversation, mode }) {
+    // Nothing to screen on. Saying so beats returning the whole universe
+    // sorted by nothing and calling it a result.
+    if (!screen?.filters?.length) {
+      session.unresolved = {
+        reason: screen?.dropped?.length
+          ? `no threshold given for ${screen.dropped.join(', ')}`
+          : 'a screen needs a measure and a threshold, such as "net margin above 10%"',
+        question,
+      };
+      return this.complete(session, {
+        question, asOf, agentName, state,
+        packet: { intent: { kind: 'screen' }, screen: screen ?? null },
+        evidence: [], blocks: [{ divider: 'SCREEN' }], totalTools: 0, conversation, mode: 'screening',
+      });
+    }
+
+    await state('gathering', { tools: { called: 0, total: 1, current: 'marked.screen' } });
+    const body = {
+      filters: screen.filters,
+      sort: screen.sort,
+      descending: screen.descending,
+      basis: screen.basis,
+      period: screen.period,
+      limit: screen.limit,
+      ...(screen.fiscal_year ? { fiscal_year: screen.fiscal_year } : {}),
+    };
+
+    let result;
+    try {
+      result = await this.data.screen(body);
+    } catch (error) {
+      session.unresolved = { reason: String(error.message || error).slice(0, 200), question };
+      return this.complete(session, {
+        question, asOf, agentName, state,
+        packet: { intent: { kind: 'screen' }, screen: body },
+        evidence: [], blocks: [{ divider: 'SCREEN' }], totalTools: 1, conversation, mode: 'screening',
+      });
+    }
+
+    const meta = result?.meta ?? result ?? {};
+    const returned = Array.isArray(result?.data) ? result.data : [];
+    // A near-zero denominator yields a margin of 198, and a screen sorts
+    // exactly those to the top, so the first rows a user sees are the ones the
+    // data cannot mean. Dropped rather than rendered with a caveat nobody reads.
+    const companies = returned.filter(plausible);
+    const discarded = returned.length - companies.length;
+
+    const notes = [...(meta.notes ?? [])];
+    if (discarded) {
+      notes.push(`${discarded} ${discarded === 1 ? 'match' : 'matches'} withheld: a ratio outside any plausible range, which is a data defect rather than a result`);
+    }
+    if (screen.dropped?.length) {
+      notes.push(`ignored ${screen.dropped.join(', ')}: named without a threshold`);
+    }
+
+    await this.tui.render({
+      patch: true,
+      blocks: [{ text: `✓ Screen · ${screen.filters.length} ${screen.filters.length === 1 ? 'filter' : 'filters'} · ${meta.matched ?? companies.length} of ${meta.universe ?? '?'} companies`, id: 'progress' }],
+      _state: { stage: 'gathering', agent: agentName, query: question, tools: { called: 1, total: 1, current: 'marked.screen' } },
+    });
+
+    const evidence = companies.map((company, index) => ({
+      evidence_id: `ev_screen_${String(index + 1).padStart(3, '0')}`,
+      type: 'screen_match',
+      company_id: company.company_id,
+      company: company.common_name || company.symbol,
+      period: company.period_end ?? meta.fiscal_year ?? null,
+      basis: meta.basis,
+      metrics: company.metrics,
+    }));
+
+    if (!companies.length) {
+      session.unresolved = { reason: 'no company in the covered universe satisfies every filter', question };
+    }
+
+    return this.complete(session, {
+      question, asOf, agentName, state,
+      packet: {
+        intent: { kind: 'screen' },
+        screen: { ...body, universe: meta.universe, matched: meta.matched, coverage: meta.coverage, notes },
+        companies: companies.map(company => ({
+          company_id: company.company_id,
+          name: company.common_name || company.symbol,
+          symbol: company.symbol ?? null,
+          period_end: company.period_end ?? null,
+          metrics: company.metrics,
+        })),
+      },
+      evidence,
+      blocks: [
+        { divider: 'SCREEN' },
+        { table: screenTable(companies, screen.filters, screen.sort) },
+        ...(notes.length ? [{ text: notes.map(note => `· ${note}`).join('\n') }] : []),
+      ],
+      totalTools: 1, conversation, mode: 'screening',
     });
   }
 
@@ -848,6 +961,43 @@ function financialTable(financials, metrics) {
     cells: [item.metric, item.value, item.period, item.basis, item.classification], colors: {},
   }));
   return { headers: ['Metric', 'Value', 'Period', 'Basis', 'Class'], rows: rows.length ? rows : [{ cells: ['No Marked financial facts returned', '—', '—', '—', '—'] }] };
+}
+
+/**
+ * One row per match, one column per metric screened on.
+ *
+ * Rates are stored as fractions and read as percentages, so they are rendered
+ * as percentages: a column of 0.697 invites the reader to do the conversion
+ * themselves and get it wrong.
+ */
+function screenTable(companies, filters, sort) {
+  const requested = [...new Set([...(sort ? [sort] : []), ...filters.map(filter => filter.metric)])];
+  // The service resolves an alias to its canonical name ("revenue_growth"
+  // becomes "Revenue_growth") and keys the results by what it resolved, so a
+  // column looked up by the name the user typed is empty on every row.
+  const present = new Set(companies.flatMap(company => Object.keys(company.metrics ?? {})));
+  const metrics = requested.map(metric => {
+    if (present.has(metric)) return metric;
+    const lowered = metric.toLowerCase();
+    return [...present].find(key => key.toLowerCase() === lowered) ?? metric;
+  });
+  const show = (metric, value) => {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+    const number = Number(value);
+    if (/_margin$|_growth$/.test(metric)) return `${(number * 100).toFixed(1)}%`;
+    if (/_pct$|holding|pledge|promoter|^fii|^dii|^roe$|^roa$/.test(metric)) return `${number.toFixed(1)}%`;
+    return number.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  };
+  return {
+    headers: ['Company', ...metrics.map(humanizeMetric), 'Period'],
+    rows: companies.map(company => ({
+      cells: [
+        company.common_name || company.symbol || '—',
+        ...metrics.map(metric => show(metric, company.metrics?.[metric])),
+        company.period_end ? String(company.period_end) : '—',
+      ],
+    })),
+  };
 }
 
 function comparisonTable(companies) {

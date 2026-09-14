@@ -81,6 +81,8 @@ export class MarkedClient {
   corporateActions(params = {}, options) { return this.request('/v1/corporate-actions', { params, ...options }); }
   events(params = {}, options) { return this.request('/v1/events', { params, ...options }); }
   search(body, options) { return this.request('/v1/search', { method: 'POST', body, ...options }); }
+  screen(body, options) { return this.request('/v1/screen', { method: 'POST', body, ...options }); }
+  screenVocabulary(options) { return this.request('/v1/screen/vocabulary', { ...options }); }
   query(body, options) { return this.request('/v1/query', { method: 'POST', body, ...options }); }
 
   async resolveCompany(reference, options) {
