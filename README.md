@@ -1,67 +1,319 @@
 # Marked Agent Harness
 
-A domain-specific agentic harness for Indian equity research. It runs a
-full-screen terminal, plans its own retrieval, executes against the Marked
-data service, validates every fact it is handed, and only then puts a
-reasoning model to work.
+**A domain-specific agentic harness for financial research.**
+
+Marked turns frontier reasoning models into grounded financial research agents.
+It supplies the financial-domain runtime, the structured retrieval, the
+provenance, the validation and the terminal, and it hands the model a research
+context instead of a search box. It is built for Indian financial markets, with
+Marked as the primary data layer and Claude Code or Codex as interchangeable
+reasoning workers.
+
+> Models reason. Marked plans, retrieves, validates, remembers, and renders.
 
 ```bash
 curl -fsSL https://marked.run/install | sh
 ```
 
-The harness is this repository and it is free software. The data is not: you
+The harness is this repository and it is free software. The data is not. You
 get an API key at [marked.run](https://marked.run), and the harness calls
-`api.marked.run` for canonical Indian company identity, prices, financials,
-metrics, shareholding, filings, events and corporate actions.
+`api.marked.run` for Indian company identity, prices, financials, metrics,
+shareholding, filings, events, corporate actions and provenance.
 
-## Why a harness and not a chatbot
+## What Marked is
 
-Ask a language model what Reliance earned last financial year and it answers.
-That is the failure. The number comes from training data of unknown vintage, on
-an unstated accounting basis, for a fiscal year the model guessed at, and it
-arrives with exactly the confidence of a number that was actually looked up.
+Most financial AI systems are a model with tools bolted on. A question arrives,
+the model decides what to search, something comes back, and the model writes an
+answer. Everything that matters about financial research, which period, which
+basis, which entity, what was knowable when, is left for the model to work out
+mid-sentence.
 
-Marked refuses to work that way. A question naming a financial measure is a
-retrieval job, not a search job:
+Marked puts a harness in front of the model and keeps the model at the end of
+the pipeline rather than the start of it.
 
-1. `runtime/plan.js` parses entity, metric, fiscal years, period and basis out
-   of the question.
-2. `data/concepts.js` maps the words analysts really use (PAT, net profit,
-   earnings, operating profit) onto canonical concept identifiers. It never
-   invents one.
-3. The plan executes against `/v1/financials` and `/v1/financial-metrics`, one
-   explicit retrieval per requested period.
-4. A returned row becomes a fact only if it carries value, concept, period,
-   basis, unit and company identity. Then it gets its own evidence ID.
-5. If the facts are not there, the terminal renders DATA GAP and no reasoning
-   provider is launched at all.
+```
+  User
+    │
+    ▼
+┌──────────────────────────────────┐
+│     Marked agentic harness       │
+│                                  │
+│   intent and plan                │
+│   entity resolution              │
+│   financial data retrieval       │
+│   point-in-time context          │
+│   provenance                     │
+│   result validation              │
+│   bounded repair                 │
+│   session state                  │
+└──────────────────────────────────┘
+    │
+    ▼
+  Claude Code or Codex
+  reasoning worker
+    │
+    ▼
+  structured result
+    │
+    ▼
+  evidence validation
+    │
+    ▼
+  Marked TUI
+```
 
-A model that cannot see the number does not get to write about it.
+The reasoning model is not the application. Claude Code and Codex are workers
+launched by Marked, and they do not own the terminal, the credentials, the
+application state or the data layer. Marked controls their stdin, stdout,
+timeout, cancellation, workspace and exit status, and validates the structured
+JSON that comes back.
 
-## The worker is subordinate
+## Why the domain belongs in the harness
 
-Claude Code and Codex are reasoning workers, not the application. Marked owns
-the session, the retrieval, the renderer and the evidence.
+Financial research carries problems a generic agent runtime has no reason to
+know about: Indian company and security identity, the relationships between NSE
+symbols, BSE codes, ISINs and CINs, Indian fiscal periods, consolidated against
+standalone reporting, the semantics of a financial statement, promoter and
+institutional ownership, promoter pledge, corporate actions, exchange filings,
+point-in-time correctness, evidence and provenance, and the normalization of
+financial concepts that people write a dozen different ways.
 
-A worker receives a prefetched research packet with provenance. It does not
-receive the Marked API key, the TUI protocol, a render channel or a network
-path of its own. Marked controls its stdin, stdout, timeout, cancellation,
-workspace and exit status, and validates the structured JSON that comes back
-against the output contract.
+Marked puts all of that inside the harness. The model never has to discover
+from scratch what PAT means, or cash conversion, or promoter holding, or
+FY2026, or what an Indian exchange disclosure is. The harness turns a
+natural-language question into a structured, evidence-backed research task
+before any model is asked to think about it.
 
-`needs_plan` from the data service is Marked asking for a retrieval plan, so
-the runtime supplies one and retries. It is never evidence and never an answer.
-A search record cannot satisfy a numeric claim.
+## What that looks like
 
-## Skills
+A user asks:
 
-Every seat on the team is a skill under `skills/`, loaded by intent, with its
-own procedure. `/analyst` is not a prompt wrapper: it resolves the reference to
-one canonical company and stops on ambiguity, fixes `as_of`, defaults to
-consolidated and refuses to mix basis silently, walks multi-year statements,
-margins, debt, working capital and cash conversion, reads promoter, FII/FPI,
-DII, public holding and pledge changes, then returns thesis, bull case, bear
-case, catalysts, invalidation and evidence-linked claims.
+```
+what changed in Dixon this year
+```
+
+Marked turns that into a financial analysis plan across the relevant periods
+and concepts, retrieves the underlying data, validates the evidence that comes
+back, and hands the reasoning worker a structured research context. The
+terminal can then surface something shaped like this:
+
+```
+FY2023 → FY2026
+
+  Revenue              ...
+  EBITDA               ...
+  PAT                  ...
+  EBITDA margin        ...
+  Finance costs        ...
+  Employee costs       ...
+  Other income         ...
+
+  Evidence
+  ────────────────────────────────
+  financial facts
+  filings
+  events
+  disclosures
+
+  Analysis
+  ────────────────────────────────
+  what changed
+  what appears fundamental
+  what may be structural or accounting
+  what remains uncertain
+```
+
+At no point does the user need to know which endpoints, metrics, filings or
+retrieval calls that required.
+
+## Self-healing research
+
+Real financial questions are ambiguous, and a planner can get them wrong. Asked
+about "cash flow" it may reach for the cash balance when the question meant
+operating cash flow. Marked is built to recover from that without making the
+user rewrite the question.
+
+Neither planner is the source of truth. The data service reads the question
+well but can return a display name its own search cannot resolve, or a single
+fiscal year where the question asked for a range. The local extractor knows the
+arithmetic but not the finance. So both produce candidates, they are merged,
+and the result is checked before a single fact is fetched.
+
+```
+  candidate plans
+        │
+        ▼
+  merge and validate
+        │
+        ▼
+  execute against Marked
+        │
+        ▼
+  deterministic sufficiency check
+        │
+        ├─────────────── complete ──────────────┐
+        │                                       │
+   insufficient                                 │
+        │                                       │
+        ▼                                       │
+      judge                                     │
+        │                                       │
+        ▼                                       │
+  repair diagnosis                              │
+        │                                       │
+        ▼                                       │
+  deterministic plan repair                     │
+        │                                       │
+        ▼                                       │
+  one bounded retry                             │
+        │                                       │
+        └───────────────────┬───────────────────┘
+                            ▼
+                         reason
+```
+
+The judge never writes an execution plan. It produces a diagnosis of what the
+results lack, and the runtime checks that diagnosis against what Marked
+actually exposes before building the repair. Every field the judge returns is
+validated against Marked's published vocabulary, and anything invalid is
+discarded rather than queried. A judge that fails, times out or answers
+nonsense leaves the plan exactly as it was, so review can improve a plan and
+never break one. There is exactly one repair. A loop of model calls is not a
+harness.
+
+## No user question should become a runtime error
+
+Marked separates research outcomes from system failures. An answer, a partial
+answer, insufficient data and a request for clarification are all legitimate
+results of a research run. Transient API failures, rate limits, incomplete
+plans and malformed model output are conditions the runtime handles internally
+wherever it can.
+
+A genuine data gap becomes a visible data-gap response. When the requested
+facts are absent, the terminal renders DATA GAP and no reasoning provider is
+launched at all. A model that cannot see the number does not get to write about
+it.
+
+## Marked as the financial data layer
+
+Marked is the primary source for Indian company research: company identity,
+securities, prices, financial statements, financial facts, financial metrics,
+shareholding, promoter information, pledge, filings, documents, corporate
+actions, events, search, provenance and point-in-time data.
+
+External providers cover enrichment where Marked reports no coverage, such as
+macro, news, derivatives and broader web research. Marked does not silently
+substitute an external source for data it holds, and where an external source
+is used it stays distinguishable in the output.
+
+## Evidence first
+
+Research runs in one direction: data, then evidence, then interpretation, then
+thesis. Material factual claims link to `evidence_id` values, and evidence
+keeps the context that makes a number meaningful: company, period, basis, unit,
+source, document, filing or publication date, `known_at` and `as_of`.
+
+The reasoning worker is not trusted to invent provenance. The runtime validates
+every evidence reference against the retrieved research context before anything
+is rendered, which is what lets the output keep fact, inference, opinion and
+external context apart instead of collapsing them into one generated paragraph.
+
+## Point-in-time research
+
+Financial research is temporal. A question about a company in 2024 must not
+quietly inherit what became knowable in 2026, so `as_of`, `known_at`, `period`,
+`period_end`, `event_date`, `filing_date` and `retrieved_at` are kept as
+distinct pieces of research context rather than flattened into one date.
+
+Indian fiscal language is resolved before retrieval, not after: "last financial
+year" becomes the latest completed April to March year rather than whatever a
+model assumes a year is.
+
+```bash
+marked --agent codex --as-of 2025-03-31T23:59:59Z "What changed in Reliance?"
+```
+
+## Indian first by design
+
+The harness is built around Indian market conventions and understands NSE, BSE,
+ISIN and CIN identity, promoter and promoter group, FII and FPI, DII, public
+shareholders, the shareholding pattern, promoter pledge, financial results,
+annual reports, investor presentations, exchange filings, corporate
+announcements and corporate actions.
+
+It does not force Indian disclosures into US-market shapes. There is no 10-K,
+no 10-Q, no 8-K and no CIK in this model of the world.
+
+## Model agnostic
+
+Marked does not depend on one reasoning model. Today it drives Claude Code and
+Codex; the architecture lets another reasoning worker be added without touching
+the financial data or research layers. The harness owns the context, so the
+model is replaceable.
+
+Reasoning runs through a CLI you already have, which means the model is
+whatever that CLI accepts. Switch at any time with `/model`.
+
+| Runtime | Auth | Models |
+| --- | --- | --- |
+| `claude` | your Claude Code CLI | `opus`, `fable`, `sonnet`, `haiku`, aliases that always resolve to the latest of each |
+| `codex` | your Codex CLI | read live from the CLI's own catalogue on disk |
+| `openai-codex` | ChatGPT device code | read from your account via `marked-auth models` |
+
+Codex models are deliberately not curated in this repository, because a list
+written here goes stale on the next release. Choosing "Default" leaves the
+model to whatever the CLI is already configured to use.
+
+`openai-codex` authenticates through ChatGPT device code and uses the Codex
+backend, not the standard OpenAI API-key endpoint, which stays separate. Manage
+it with `marked-auth login`, `status`, `models` and `logout`. Credentials live
+in `~/.marked/auth.json` with user-only permissions, and refresh tokens are
+never returned by status commands, included in prompts, written to telemetry,
+or sent to the data service.
+
+## Native API, external MCP
+
+The application uses a first-party API client for its own data access. MCP is
+an external integration surface, for other people's agents reaching Marked.
+
+```
+  MARKED
+    │
+    ├── Native application
+    │     └── Marked API client
+    │
+    └── External access
+          └── REST / MCP
+```
+
+The harness does not route its own internal requests through MCP merely because
+MCP exists.
+
+## API capacity
+
+Marked accounts carry tiered API limits, so capacity is a runtime concern
+rather than something each skill improvises. Today the data layer is the single
+REST boundary for the application, and it handles rate-limit responses with
+`Retry-After` aware retry and backoff, preserves rate-limit headers on every
+response, and supports cancellation through an abort signal.
+
+Bounded concurrency, request queueing and deduplication are not implemented
+yet. A research plan that touches several companies currently issues its
+retrievals in parallel, which a low-concurrency account will feel. That work
+belongs in `data/marked-client.js`, behind the same boundary, and nowhere else.
+
+## The research terminal
+
+Marked includes a full-screen terminal for working with research state, which
+combines financial profiles, time series, market context, ownership, filings,
+events, corporate actions, evidence, research verdicts, comparisons and risk
+analysis.
+
+The terminal is a presentation layer owned by Marked. Reasoning workers never
+write render files and never talk to the TUI.
+
+Nine seats make up the team. Each is a skill under `skills/`, loaded by intent,
+with its own procedure.
 
 | Command | Takes | Seat |
 | --- | --- | --- |
@@ -77,79 +329,128 @@ case, catalysts, invalidation and evidence-linked claims.
 
 Plain questions work too. The commands are shortcuts, not a required syntax.
 
-The domain playbook in `SKILL.md` binds all of them: reason from data to
-evidence to interpretation to thesis, cite `evidence_id` for every material
-fact, separate fact from inference from opinion, preserve `as_of`, `known_at`,
-period, unit and consolidated or standalone basis, and never map Indian
-disclosures onto SEC forms.
+`/analyst` is not a prompt wrapper. It resolves the reference to one canonical
+company and stops on ambiguity, fixes `as_of`, defaults to consolidated and
+refuses to mix basis silently, walks multi-year statements, margins, debt,
+working capital and cash conversion, reads promoter, FII and FPI, DII, public
+holding and pledge changes, reads results, annual reports, presentations,
+disclosures, events and corporate actions, and returns a thesis with bull case,
+bear case, catalysts, invalidation conditions and evidence-linked claims.
 
-## India, handled before retrieval
+Inside the terminal: `n` to ask, `?` for the keyboard reference, `/model` to
+switch runtime, `/marked <key>` to save a new key, `/new` and `/history` for
+conversation, `s` and `l` to save and load reports, `1` to `9` to run a
+suggested follow-up, `q` to step back. `marked --help` prints all of it.
 
-`runtime/temporal.js` resolves Indian fiscal language before anything is
-fetched, so "last financial year" becomes the latest completed April to March
-year rather than whatever a model assumes a year is. Names, NSE symbols, BSE
-codes, ISINs and CINs resolve to canonical company and security identities
-first. `runtime/mode.js` picks factual, comparative, analytical, research,
-screening or event output, so a one-line lookup does not inherit an investment
-research template.
+## Quick start
 
-Marked is read only. It places no orders.
+Installation walks four steps in the terminal itself: global or
+per-repository configuration, your API key entered hidden and checked against
+the API, a choice of Claude Code CLI, Codex CLI or an OpenAI Codex
+subscription, and a model. Re-run it any time with `marked-onboard`.
 
-## Setup
-
-Installation opens the terminal and walks four steps in the same full-screen
-UI:
-
-1. Global or per-repository configuration.
-2. Your Marked API key, entered hidden and checked against the API.
-3. Claude Code CLI, Codex CLI, or an OpenAI Codex subscription.
-4. A model.
-
-Re-run it any time with `marked-onboard`. Open the terminal with `marked`.
-
-Inside: `n` to ask, `?` for the keyboard reference, `/model` to switch runtime,
-`/marked <key>` to save a new key, `/new` and `/history` for conversation,
-`s` and `l` to save and load reports, `1` to `9` to run a suggested follow-up,
-`q` to step back. `marked --help` prints all of it.
-
-## Models
-
-Marked drives reasoning through a CLI you already have, so the model is
-whatever that CLI accepts. Switch at any time with `/model`.
-
-| Runtime | Auth | Models |
-| --- | --- | --- |
-| `claude` | your Claude Code CLI | `opus`, `fable`, `sonnet`, `haiku`, aliases that always resolve to the latest of each |
-| `codex` | your Codex CLI | read live from the CLI's own catalogue on disk |
-| `openai-codex` | ChatGPT device code | read from your account via `marked-auth models` |
-
-Codex models are deliberately not curated in this repository, because a list
-written here goes stale on the next release. Choosing "Default" leaves the
-model to whatever the CLI is already configured to use.
-
-### OpenAI Codex
-
-`openai-codex` is a first-class runtime. It authenticates through ChatGPT
-device code and uses the Codex backend, not the standard OpenAI API-key
-endpoint, which stays separate.
+To drive it directly:
 
 ```bash
-marked-auth login
-marked-auth status
-marked-auth models
-marked-auth logout
+marked --agent codex "Analyze Reliance Industries"
+marked --agent claude "Compare TCS and Infosys"
+marked --agent codex --as-of 2025-03-31T23:59:59Z "What changed in Reliance?"
 ```
 
-Credentials live in `~/.marked/auth.json` with user-only permissions. Refresh
-tokens are never returned by status commands, included in prompts, written to
-telemetry, or sent to the data service.
+Configuration lives in `~/.marked/config.json` at mode 0600, and a
+`.marked/config.json` inside a repository takes precedence over the global one:
 
-## State
+```json
+{
+  "apiKey": "mk_live_...",
+  "agent": "codex"
+}
+```
 
-Everything local lives under `~/.marked/`: `config.json` at mode 0600,
-`auth.json`, per-research sessions, `conversation.json` for follow-ups, and
-saved reports. A `.marked/config.json` inside a repository takes precedence
-over the global one.
+`MARKED_API_KEY` in the environment overrides the file. Sessions,
+`conversation.json` for follow-ups and saved reports live under `~/.marked/`
+alongside it.
+
+## Architecture
+
+```
+                          MARKED
+                    AGENTIC HARNESS
+                            │
+            ┌───────────────┼───────────────┐
+            │               │               │
+          DATA           CONTROL            UI
+            │               │               │
+      Marked API         planning          TUI
+      identity        orchestration       panels
+      financials          retries         charts
+      filings          validation       evidence
+      ownership          sessions
+      provenance
+            │               │
+            └───────┬───────┘
+                    │
+            research context
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+    Claude Code             Codex
+     reasoning            reasoning
+      worker                worker
+          │                   │
+          └─────────┬─────────┘
+                    │
+            structured result
+                    │
+            evidence validation
+                    │
+                    ▼
+                  MARKED
+                    │
+                    ▼
+                   TUI
+```
+
+The tree follows the same split. `runtime/` holds orchestration, sessions,
+agent providers, planning and validation. `data/` is the Marked API client and
+the canonical model behind it: companies, securities, financials, filings,
+ownership, events, corporate actions and provenance. `skills/` holds the nine
+seats. `src/` is presentation components, formatting and themes; `terminal/` is
+the terminal runtime, rendering, panels and server; `bin/` is the CLI
+entrypoints; `tests/` is unit, integration and smoke coverage.
+
+## Domain playbook
+
+`SKILL.md` at the top level defines the financial research rules and nothing
+else. It carries no installation instructions, no credentials, no transport
+details, no TUI commands, no provider-specific tool names, no process lifecycle
+and no render commands, because all of those belong to the runtime.
+
+Skills describe what to investigate. The harness decides how to retrieve and
+execute it.
+
+## Design principles
+
+**Domain-specific over generic.** The harness understands financial research
+concepts rather than treating finance as generic retrieval.
+
+**Evidence over confidence.** An unsupported answer is worse than an explicit
+data gap.
+
+**Deterministic control around probabilistic reasoning.** Models propose,
+interpret and diagnose. The runtime validates, executes and governs.
+
+**Bounded recovery.** A failed plan can be repaired once. The harness does not
+enter an uncontrolled agent loop.
+
+**Point-in-time correctness.** Historical research respects what was knowable
+at the requested time.
+
+**Provider independence.** Claude and Codex are reasoning backends, not
+architectural dependencies.
+
+**Data first.** The model should spend its context understanding the financial
+problem, not discovering where basic financial facts live.
 
 ## Development
 
@@ -166,11 +467,41 @@ uv run ruff check .
 ```
 
 The terminal ships as a built bundle, so a change under `terminal/` is not live
-until `npm run build` has run.
+until `npm run build` has run. There is headless smoke coverage for the
+research pipeline as well, so a healthy run is verifiable without the
+interactive terminal.
+
+## Current scope
+
+Marked is focused on Indian listed-company research: financial analysis,
+company comparison, earnings analysis, ownership research, filing and
+disclosure research, event and corporate-action research, evidence-backed
+financial reasoning, and terminal-based research workflows.
+
+The application is read only and places no orders.
+
+## Compliance boundary
+
+Marked separates Marked-backed facts from model interpretation in its output
+contract. Any workflow used to generate, publish or distribute research or
+investment-related content should be reviewed for the applicable regulatory,
+disclosure, conflicts, suitability, recordkeeping and publication requirements.
+This repository is not legal advice.
 
 ## License
 
-GNU Affero General Public License v3.0. See [LICENSE](LICENSE).
+Marked Agent Harness is licensed under the GNU Affero General Public License
+v3.0. See [LICENSE](LICENSE) for the full text.
 
-If you run a modified version of this harness as a network service, the AGPL
-requires you to offer that modified source to its users.
+The license covers the software in this repository. Marked's hosted data
+services, datasets, APIs and other separately licensed materials are governed
+by their own terms.
+
+## Status
+
+Marked is actively under development. The goal is not another finance chatbot,
+it is the domain-specific execution layer around financial reasoning: financial
+data, plus financial domain knowledge, plus agentic planning, plus evidence,
+plus validation, plus frontier reasoning.
+
+**Marked turns frontier models into financial research agents.**
