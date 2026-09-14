@@ -6,5 +6,5 @@ def test_install_script_is_posix_shell_and_bootstraps_onboard():
     text = script.read_text()
     assert text.startswith("#!/bin/sh\n")
     assert "uv tool install --force --quiet" in text
-    assert "marked\" onboard" in text
+    assert 'exec "$BIN_DIR/marked" "$@"' in text
     assert "</dev/tty" in text

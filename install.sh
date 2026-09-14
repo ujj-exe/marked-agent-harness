@@ -9,9 +9,9 @@ if command -v uv >/dev/null 2>&1; then
     uv tool install --force --quiet "$SOURCE"
     BIN_DIR=$(uv tool dir --bin)
     if [ -x "$BIN_DIR/marked" ]; then
-        exec "$BIN_DIR/marked" onboard "$@" </dev/tty
+        exec "$BIN_DIR/marked" "$@" </dev/tty
     fi
-    exec marked onboard "$@" </dev/tty
+    exec marked "$@" </dev/tty
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -20,4 +20,4 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 python3 -m pip install --quiet --user --upgrade "marked-agent-harness @ $SOURCE"
-exec python3 -m market_data.onboarding onboard "$@" </dev/tty
+exec python3 -m market_data.terminal "$@" </dev/tty

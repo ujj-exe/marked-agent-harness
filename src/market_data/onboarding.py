@@ -23,6 +23,8 @@ from market_data.agent_auth import CODEX_PROVIDER, CodexAuthError, CodexAuthStor
 InstallScope = Literal["global", "repo"]
 MARKED_MCP_URL = "https://app.marked.run/mcp/"
 DEFAULT_MODEL = "gpt-5.6-luna"
+TOTAL_STEPS = 4
+_TTY_INPUT = None
 TUI_STYLE = Style(
     [
         ("qmark", "fg:#00d7af bold"),
@@ -168,13 +170,31 @@ def _ask_secret(prompt: str, *, secret_input: Callable[[str], str]) -> str:
     return secret_input(f"{prompt} (input is hidden): ").strip()
 
 
-def _header(output_fn: Callable[[str], None]) -> None:
+def _ask_confirm(prompt: str, *, input_fn: Callable[[str], str]) -> bool:
+    if _interactive(input_fn):
+        answer = questionary.confirm(
+            prompt, default=True, qmark="◆", style=TUI_STYLE
+        ).ask()
+        if answer is None:
+            raise KeyboardInterrupt
+        return bool(answer)
+    return input_fn(f"{prompt} [Y/n]: ").strip().lower() not in {"n", "no"}
+
+
+def _header(output_fn: Callable[[str], None], *, step: int, title: str) -> None:
     cyan = "\033[38;5;43m" if output_fn is print and sys.stdout.isatty() else ""
     reset = "\033[0m" if cyan else ""
     output_fn(f"{cyan}╭──────────────────────────────────────────────╮{reset}")
     output_fn(f"{cyan}│  MARKED                                      │{reset}")
-    output_fn(f"{cyan}│  Agent harness setup                         │{reset}")
+    output_fn(f"{cyan}│  Step {step} of {TOTAL_STEPS}  ·  {title:<27}│{reset}")
     output_fn(f"{cyan}╰──────────────────────────────────────────────╯{reset}")
+
+
+def _screen(output_fn: Callable[[str], None], *, step: int, title: str) -> None:
+    if output_fn is print and sys.stdout.isatty():
+        output_fn("\033[2J\033[H")
+    _header(output_fn, step=step, title=title)
+    output_fn("")
 
 
 def _status(label: str, detected: bool) -> str:
@@ -206,20 +226,10 @@ def run_onboarding(
     auth_store: CodexAuthStore | None = None,
 ) -> Path:
     clients = detect_clients(auth_store=auth_store)
-    _header(output_fn)
-    output_fn("")
-    output_fn("Environment")
-    output_fn(_status("Claude Code", clients.claude_code))
-    output_fn(_status("Codex CLI", clients.codex_cli))
-    output_fn(
-        f"  {'✓' if clients.codex_auth else '○'} {'OpenAI Codex auth':<20} "
-        f"{'signed in' if clients.codex_auth else 'not signed in'}"
-    )
-    output_fn("")
-
+    _screen(output_fn, step=1, title="Install scope")
     if scope is None:
         selected_scope = "global" if _ask_choice(
-            "Where should the harness be configured?",
+            "Where should Marked be installed?",
             (
                 "Global  · available in every project",
                 f"This repository  · {repository_root(cwd)}",
@@ -232,10 +242,19 @@ def run_onboarding(
     if selected_scope not in {"global", "repo"}:
         raise ValueError(f"Unknown install scope: {selected_scope}")
 
+    _screen(output_fn, step=2, title="Connect Marked")
     output_fn("Marked API key  ·  https://app.marked.run/dashboard")
     marked_api_key = _ask_secret("Paste your Marked API key", secret_input=secret_input)
-    output_fn("")
 
+    _screen(output_fn, step=3, title="Choose runtime")
+    output_fn("Detected on this computer")
+    output_fn(_status("Claude Code", clients.claude_code))
+    output_fn(_status("Codex CLI", clients.codex_cli))
+    output_fn(
+        f"  {'✓' if clients.codex_auth else '○'} {'OpenAI Codex auth':<20} "
+        f"{'signed in' if clients.codex_auth else 'not signed in'}"
+    )
+    output_fn("")
     if provider is None:
         selected_provider = (
             CODEX_PROVIDER
@@ -255,16 +274,29 @@ def run_onboarding(
         selected_provider = provider
 
     if selected_provider == CODEX_PROVIDER and not clients.codex_auth:
-        output_fn("  ○ Codex sign-in needed  · run `marked-auth login` after setup")
+        if provider is None and _ask_confirm("Sign in with ChatGPT now?", input_fn=input_fn):
+            from market_data.agent_auth import run_login
 
+            run_login(auth_store)
+            clients = detect_clients(auth_store=auth_store)
+        else:
+            output_fn("  ○ Codex sign-in needed  · run `marked-auth login` after setup")
+
+    _screen(output_fn, step=4, title="Choose model")
     discovered = _model_options(selected_provider, clients, auth_store)
     if model is None:
         if discovered:
-            output_fn("Available Codex models:")
             model_index = _ask_choice(
-                "Choose a model", tuple(discovered), input_fn=input_fn, output_fn=output_fn
+                "Choose a model",
+                (*discovered, "Enter a model name manually"),
+                input_fn=input_fn,
+                output_fn=output_fn,
             )
-            selected_model = discovered[model_index - 1]
+            selected_model = (
+                discovered[model_index - 1]
+                if model_index <= len(discovered)
+                else _ask_text("Model name", DEFAULT_MODEL, input_fn=input_fn)
+            )
         else:
             default_model = os.getenv(
                 "MARKED_AGENT_MODEL", os.getenv("LUNA_MODEL", DEFAULT_MODEL)
@@ -281,7 +313,8 @@ def run_onboarding(
         model=selected_model,
         clients=clients,
     )
-    output_fn("")
+    if output_fn is print and sys.stdout.isatty():
+        output_fn("\033[2J\033[H")
     output_fn("✓ Marked agent is ready")
     output_fn(f"  Scope     {selected_scope}")
     output_fn(f"  Provider  {selected_provider}")
@@ -290,6 +323,18 @@ def run_onboarding(
     output_fn("")
     output_fn("Restart your agent CLI to load the configuration.")
     return target
+
+
+def attach_terminal_input() -> None:
+    global _TTY_INPUT
+    if sys.stdin.isatty() or os.name == "nt":
+        return
+    try:
+        _TTY_INPUT = open("/dev/tty", encoding="utf-8")  # noqa: SIM115
+    except OSError:
+        return
+    if _TTY_INPUT.isatty():
+        sys.stdin = _TTY_INPUT
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -301,6 +346,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--provider", choices=("openai", CODEX_PROVIDER))
     parser.add_argument("--model")
     args = parser.parse_args(argv)
+    attach_terminal_input()
     try:
         run_onboarding(scope=args.scope, provider=args.provider, model=args.model)
     except (KeyboardInterrupt, EOFError):
