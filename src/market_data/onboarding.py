@@ -15,11 +15,25 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
+import questionary
+from questionary import Choice, Style
+
 from market_data.agent_auth import CODEX_PROVIDER, CodexAuthError, CodexAuthStore
 
 InstallScope = Literal["global", "repo"]
 MARKED_MCP_URL = "https://app.marked.run/mcp/"
 DEFAULT_MODEL = "gpt-5.6-luna"
+TUI_STYLE = Style(
+    [
+        ("qmark", "fg:#00d7af bold"),
+        ("question", "bold"),
+        ("answer", "fg:#00d7af bold"),
+        ("pointer", "fg:#00d7af bold"),
+        ("highlighted", "fg:#00d7af bold"),
+        ("selected", "fg:#00d7af"),
+        ("instruction", "fg:#777777"),
+    ]
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,8 +110,31 @@ def write_config(path: str | Path, *, marked_api_key: str, provider: str, model:
     return target
 
 
-def _ask_choice(prompt: str, options: tuple[str, ...], *, input_fn: Callable[[str], str],
-                output_fn: Callable[[str], None], default: int = 1) -> int:
+def _interactive(input_fn: Callable[[str], str]) -> bool:
+    return input_fn is input and sys.stdin.isatty()
+
+
+def _ask_choice(
+    prompt: str,
+    options: tuple[str, ...],
+    *,
+    input_fn: Callable[[str], str],
+    output_fn: Callable[[str], None],
+    default: int = 1,
+) -> int:
+    if _interactive(input_fn):
+        answer = questionary.select(
+            prompt,
+            choices=[Choice(option, value=index) for index, option in enumerate(options, 1)],
+            default=default,
+            pointer="❯",
+            qmark="◆",
+            instruction="(use arrow keys)",
+            style=TUI_STYLE,
+        ).ask()
+        if answer is None:
+            raise KeyboardInterrupt
+        return int(answer)
     for index, option in enumerate(options, 1):
         output_fn(f"  {index}. {option}")
     while True:
@@ -107,6 +144,41 @@ def _ask_choice(prompt: str, options: tuple[str, ...], *, input_fn: Callable[[st
         if answer.isdigit() and 1 <= int(answer) <= len(options):
             return int(answer)
         output_fn("Choose one of the listed options.")
+
+
+def _ask_text(
+    prompt: str, default: str, *, input_fn: Callable[[str], str]
+) -> str:
+    if _interactive(input_fn):
+        answer = questionary.text(
+            prompt, default=default, qmark="◆", style=TUI_STYLE
+        ).ask()
+        if answer is None:
+            raise KeyboardInterrupt
+        return answer.strip() or default
+    return input_fn(f"{prompt} [{default}]: ").strip() or default
+
+
+def _ask_secret(prompt: str, *, secret_input: Callable[[str], str]) -> str:
+    if secret_input is getpass.getpass and sys.stdin.isatty():
+        answer = questionary.password(prompt, qmark="◆", style=TUI_STYLE).ask()
+        if answer is None:
+            raise KeyboardInterrupt
+        return answer.strip()
+    return secret_input(f"{prompt} (input is hidden): ").strip()
+
+
+def _header(output_fn: Callable[[str], None]) -> None:
+    cyan = "\033[38;5;43m" if output_fn is print and sys.stdout.isatty() else ""
+    reset = "\033[0m" if cyan else ""
+    output_fn(f"{cyan}╭──────────────────────────────────────────────╮{reset}")
+    output_fn(f"{cyan}│  MARKED                                      │{reset}")
+    output_fn(f"{cyan}│  Agent harness setup                         │{reset}")
+    output_fn(f"{cyan}╰──────────────────────────────────────────────╯{reset}")
+
+
+def _status(label: str, detected: bool) -> str:
+    return f"  {'✓' if detected else '○'} {label:<20} {'detected' if detected else 'not found'}"
 
 
 def _model_options(provider: str, clients: ClientDetection,
@@ -134,15 +206,24 @@ def run_onboarding(
     auth_store: CodexAuthStore | None = None,
 ) -> Path:
     clients = detect_clients(auth_store=auth_store)
-    output_fn("Marked agent setup")
-    output_fn(f"Claude Code: {'detected' if clients.claude_code else 'not found'}")
-    output_fn(f"Codex CLI: {'detected' if clients.codex_cli else 'not found'}")
-    output_fn(f"OpenAI Codex auth: {'signed in' if clients.codex_auth else 'not signed in'}")
+    _header(output_fn)
+    output_fn("")
+    output_fn("Environment")
+    output_fn(_status("Claude Code", clients.claude_code))
+    output_fn(_status("Codex CLI", clients.codex_cli))
+    output_fn(
+        f"  {'✓' if clients.codex_auth else '○'} {'OpenAI Codex auth':<20} "
+        f"{'signed in' if clients.codex_auth else 'not signed in'}"
+    )
+    output_fn("")
 
     if scope is None:
         selected_scope = "global" if _ask_choice(
-            "Where should Marked be installed?",
-            ("Global (~/.marked)", "This repository (.marked)"),
+            "Where should the harness be configured?",
+            (
+                "Global  · available in every project",
+                f"This repository  · {repository_root(cwd)}",
+            ),
             input_fn=input_fn,
             output_fn=output_fn,
         ) == 1 else "repo"
@@ -151,17 +232,18 @@ def run_onboarding(
     if selected_scope not in {"global", "repo"}:
         raise ValueError(f"Unknown install scope: {selected_scope}")
 
-    output_fn("Get your key at https://app.marked.run/dashboard")
-    marked_api_key = secret_input("Paste your Marked API key (input is hidden): ").strip()
+    output_fn("Marked API key  ·  https://app.marked.run/dashboard")
+    marked_api_key = _ask_secret("Paste your Marked API key", secret_input=secret_input)
+    output_fn("")
 
     if provider is None:
         selected_provider = (
             CODEX_PROVIDER
             if _ask_choice(
-                "Which model provider should the harness use?",
+                "Choose a model provider",
                 (
-                    "OpenAI — use the existing API-key configuration",
-                    "OpenAI Codex — use your ChatGPT/Codex subscription",
+                    "OpenAI  · existing API-key configuration",
+                    "OpenAI Codex  · ChatGPT/Codex subscription",
                 ),
                 input_fn=input_fn,
                 output_fn=output_fn,
@@ -173,7 +255,7 @@ def run_onboarding(
         selected_provider = provider
 
     if selected_provider == CODEX_PROVIDER and not clients.codex_auth:
-        output_fn("Codex auth is not configured. Run `marked-auth login` after setup.")
+        output_fn("  ○ Codex sign-in needed  · run `marked-auth login` after setup")
 
     discovered = _model_options(selected_provider, clients, auth_store)
     if model is None:
@@ -187,9 +269,7 @@ def run_onboarding(
             default_model = os.getenv(
                 "MARKED_AGENT_MODEL", os.getenv("LUNA_MODEL", DEFAULT_MODEL)
             )
-            selected_model = input_fn(
-                f"Model [{default_model}]: "
-            ).strip() or default_model
+            selected_model = _ask_text("Choose a model", default_model, input_fn=input_fn)
     else:
         selected_model = model
 
@@ -201,9 +281,14 @@ def run_onboarding(
         model=selected_model,
         clients=clients,
     )
-    output_fn(f"Saved Marked agent configuration to {target}")
-    output_fn(f"Provider: {selected_provider}; model: {selected_model}")
-    output_fn("Restart the detected agent CLI to load the setup.")
+    output_fn("")
+    output_fn("✓ Marked agent is ready")
+    output_fn(f"  Scope     {selected_scope}")
+    output_fn(f"  Provider  {selected_provider}")
+    output_fn(f"  Model     {selected_model}")
+    output_fn(f"  Config    {target}")
+    output_fn("")
+    output_fn("Restart your agent CLI to load the configuration.")
     return target
 
 
