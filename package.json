@@ -1,7 +1,7 @@
 {
     "name": "marked-agent-harness",
     "version": "0.1.0",
-    "description": "Marked — India-first financial research terminal and agent runtime",
+    "description": "Marked \u2014 India-first financial research terminal and agent runtime",
     "type": "module",
     "scripts": {
         "build": "node scripts/build.js",
@@ -31,7 +31,7 @@
     },
     "homepage": "https://github.com/ujjwalpreenja1308-web/marked-agent-harness#readme",
     "bugs": "https://github.com/ujjwalpreenja1308-web/marked-agent-harness/issues",
-    "license": "MIT",
+    "license": "AGPL-3.0-only",
     "engines": {
         "node": ">=20"
     },
