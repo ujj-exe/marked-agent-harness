@@ -233,7 +233,9 @@ async def discover_codex_models(*, store: CodexAuthStore | None = None) -> list[
     headers = {**credentials.headers, "Authorization": f"Bearer {credentials.api_key}"}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
-            async with session.get(f"{credentials.base_url}/models", headers=headers) as response:
+            async with session.get(
+                f"{credentials.base_url}/models?client_version=0.0.0", headers=headers
+            ) as response:
                 if response.status != 200:
                     return []
                 payload = await response.json()

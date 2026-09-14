@@ -1,0 +1,156 @@
+#!/usr/bin/env node
+/**
+ * marked-chart — Plain-text braille chart for research mode
+ *
+ * Usage:
+ *   echo '{"values":[100,105,98,110,107],"label":"30d"}' | marked-chart
+ *   marked-chart --values 100,105,98,110,107 --label 30d --width 50 --height 5
+ *
+ * Outputs a plain-text braille chart (no ANSI) suitable for markdown code blocks.
+ */
+
+const DOT_MAP = [
+  [0x01, 0x08],
+  [0x02, 0x10],
+  [0x04, 0x20],
+  [0x40, 0x80],
+];
+const BRAILLE_BASE = 0x2800;
+
+function fmtPrice(v) {
+  if (v >= 1000) return `$${(v / 1000).toFixed(1)}K`;
+  if (v >= 1) return `$${v.toFixed(2)}`;
+  return `$${v.toFixed(4)}`;
+}
+
+function resample(arr, targetLen) {
+  if (arr.length === targetLen) return arr.map(Number);
+  const result = [];
+  for (let i = 0; i < targetLen; i++) {
+    const srcIdx = (i / (targetLen - 1)) * (arr.length - 1);
+    const lo = Math.floor(srcIdx);
+    const hi = Math.min(lo + 1, arr.length - 1);
+    const frac = srcIdx - lo;
+    result.push(Number(arr[lo]) * (1 - frac) + Number(arr[hi]) * frac);
+  }
+  return result;
+}
+
+function brailleChartPlain({ values, width = 50, height = 5, label = '' }) {
+  if (!values || values.length < 2) {
+    console.log('(insufficient data)');
+    return;
+  }
+
+  const maxLabelLen = Math.max(
+    fmtPrice(Math.min(...values)).length,
+    fmtPrice(Math.max(...values)).length
+  );
+  const axisWidth = maxLabelLen + 1;
+  const chartCols = width - axisWidth;
+  if (chartCols < 4) { console.log('(too narrow)'); return; }
+
+  const subCols = chartCols * 2;
+  const resampled = resample(values, subCols);
+  const min = Math.min(...resampled);
+  const max = Math.max(...resampled);
+  const range = max - min || 1;
+  const subRows = height * 4;
+
+  const yPositions = resampled.map(v =>
+    Math.round((1 - (v - min) / range) * (subRows - 1))
+  );
+
+  const grid = Array.from({ length: height }, () => new Uint8Array(chartCols));
+
+  for (let sx = 0; sx < subCols; sx++) {
+    const y = yPositions[sx];
+    const col = Math.floor(sx / 2);
+    const dotCol = sx % 2;
+    const row = Math.floor(y / 4);
+    const dotRow = y % 4;
+    if (row >= 0 && row < height && col >= 0 && col < chartCols) {
+      grid[row][col] |= DOT_MAP[dotRow][dotCol];
+    }
+  }
+
+  // Fill between consecutive points
+  for (let sx = 1; sx < subCols; sx++) {
+    const y0 = yPositions[sx - 1];
+    const y1 = yPositions[sx];
+    if (Math.abs(y1 - y0) > 1) {
+      const step = y1 > y0 ? 1 : -1;
+      for (let y = y0 + step; y !== y1; y += step) {
+        const col = Math.floor((sx - 0.5) / 2);
+        const dotCol = Math.round((sx - 0.5) % 2) ? 1 : 0;
+        const row = Math.floor(y / 4);
+        const dotRow = y % 4;
+        if (row >= 0 && row < height && col >= 0 && col < chartCols) {
+          grid[row][col] |= DOT_MAP[dotRow][dotCol];
+        }
+      }
+    }
+  }
+
+  const lines = [];
+  for (let row = 0; row < height; row++) {
+    let axis = '';
+    if (row === 0) {
+      axis = fmtPrice(max).padStart(axisWidth - 1) + ' ';
+    } else if (row === height - 1) {
+      axis = fmtPrice(min).padStart(axisWidth - 1) + ' ';
+    } else if (row === Math.floor(height / 2)) {
+      const mid = (max + min) / 2;
+      axis = fmtPrice(mid).padStart(axisWidth - 1) + ' ';
+    } else {
+      axis = ' '.repeat(axisWidth);
+    }
+
+    let rowStr = '';
+    for (let col = 0; col < chartCols; col++) {
+      rowStr += grid[row][col] === 0 ? ' ' : String.fromCharCode(BRAILLE_BASE + grid[row][col]);
+    }
+    lines.push(axis + rowStr);
+  }
+
+  if (label) {
+    lines.push(' '.repeat(axisWidth) + label);
+  }
+
+  console.log(lines.join('\n'));
+}
+
+// Parse input
+const args = process.argv.slice(2);
+if (args.includes('--values')) {
+  const idx = args.indexOf('--values');
+  const values = args[idx + 1].split(',').map(Number);
+  const wIdx = args.indexOf('--width');
+  const hIdx = args.indexOf('--height');
+  const lIdx = args.indexOf('--label');
+  brailleChartPlain({
+    values,
+    width: wIdx >= 0 ? parseInt(args[wIdx + 1]) : 50,
+    height: hIdx >= 0 ? parseInt(args[hIdx + 1]) : 5,
+    label: lIdx >= 0 ? args[lIdx + 1] : '',
+  });
+} else {
+  // Read JSON from stdin
+  let data = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', chunk => data += chunk);
+  process.stdin.on('end', () => {
+    try {
+      const parsed = JSON.parse(data);
+      brailleChartPlain({
+        values: parsed.values || parsed,
+        width: parsed.width || 50,
+        height: parsed.height || 5,
+        label: parsed.label || '',
+      });
+    } catch (e) {
+      console.error('marked-chart: invalid JSON input');
+      process.exit(1);
+    }
+  });
+}

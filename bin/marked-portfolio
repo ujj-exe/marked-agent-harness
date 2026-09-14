@@ -1,0 +1,6 @@
+#!/bin/bash
+# Portfolio CLI — broker connection and portfolio data.
+
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+exec node "$ROOT/lib/portfolio-cli.js" "$@"

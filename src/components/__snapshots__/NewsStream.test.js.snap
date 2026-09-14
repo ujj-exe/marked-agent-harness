@@ -1,0 +1,41 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`newsStream > handles items without source 1`] = `"[38;2;0;212;255m·[0m [38;2;255;255;255mNo source article[0m                                                           [38;2;85;85;85m2h[0m"`;
+
+exports[`newsStream > handles items without time 1`] = `"[38;2;0;212;255m·[0m [38;2;255;255;255mNo time article[0m                                                           [38;2;0;212;255mTest[0m"`;
+
+exports[`newsStream > handles single item 1`] = `"[38;2;0;212;255m·[0m [38;2;255;255;255mFed signals rate cuts as inflation cools to 3.2% target range[0m     [38;2;0;212;255mBloomberg[0m [38;2;85;85;85m2h[0m"`;
+
+exports[`newsStream > renders a basic news feed 1`] = `
+"[38;2;0;212;255m·[0m [38;2;255;255;255mFed signals rate cuts as inflation cools to 3.2% target range[0m     [38;2;0;212;255mBloomberg[0m [38;2;85;85;85m2h[0m
+[38;2;0;212;255m·[0m [38;2;255;255;255mNVIDIA surges on blowout Q4 earnings, data center revenue up 409%[0m   [38;2;0;212;255mReuters[0m [38;2;85;85;85m3h[0m
+[38;2;0;212;255m·[0m [38;2;255;255;255mApple Vision Pro launches Feb 2 with mixed analyst reception[0m           [38;2;0;212;255mWSJ[0m [38;2;85;85;85m21h[0m
+[38;2;0;212;255m·[0m [38;2;255;255;255mBitcoin crosses $50K for first time since 2021 bull run peak[0m       [38;2;0;212;255mCoinDesk[0m [38;2;85;85;85m1d[0m"
+`;
+
+exports[`newsStream > renders in bloomberg theme 1`] = `
+"[38;2;255;140;0m·[0m [38;2;255;255;255mFed signals rate cuts as inflation cools to 3.2% target range[0m     [38;2;255;140;0mBloomberg[0m [38;2;85;85;85m2h[0m
+[38;2;255;140;0m·[0m [38;2;255;255;255mNVIDIA surges on blowout Q4 earnings, data center revenue up 409%[0m   [38;2;255;140;0mReuters[0m [38;2;85;85;85m3h[0m"
+`;
+
+exports[`newsStream > renders in dracula theme 1`] = `
+"[38;2;189;147;249m·[0m [38;2;248;248;242mFed signals rate cuts as inflation cools to 3.2% target range[0m     [38;2;189;147;249mBloomberg[0m [38;2;98;114;164m2h[0m
+[38;2;189;147;249m·[0m [38;2;248;248;242mNVIDIA surges on blowout Q4 earnings, data center revenue up 409%[0m   [38;2;189;147;249mReuters[0m [38;2;98;114;164m3h[0m"
+`;
+
+exports[`newsStream > renders in monochrome theme 1`] = `
+"[38;2;255;255;255m·[0m [38;2;255;255;255mFed signals rate cuts as inflation cools to 3.2% target range[0m     [38;2;153;153;153mBloomberg[0m [38;2;68;68;68m2h[0m
+[38;2;255;255;255m·[0m [38;2;255;255;255mNVIDIA surges on blowout Q4 earnings, data center revenue up 409%[0m   [38;2;153;153;153mReuters[0m [38;2;68;68;68m3h[0m"
+`;
+
+exports[`newsStream > renders with narrow width 1`] = `
+"[38;2;0;212;255m·[0m [38;2;255;255;255mFed signals rate cuts as inflation…[0m [38;2;0;212;255mBloomberg[0m [38;2;85;85;85m2h[0m
+[38;2;0;212;255m·[0m [38;2;255;255;255mNVIDIA surges on blowout Q4 earnings…[0m [38;2;0;212;255mReuters[0m [38;2;85;85;85m3h[0m
+[38;2;0;212;255m·[0m [38;2;255;255;255mApple Vision Pro launches Feb 2 with mi…[0m [38;2;0;212;255mWSJ[0m [38;2;85;85;85m21h[0m"
+`;
+
+exports[`newsStream > renders with wide width 1`] = `
+"[38;2;0;212;255m·[0m [38;2;255;255;255mFed signals rate cuts as inflation cools to 3.2% target range[0m                                             [38;2;0;212;255mBloomberg[0m [38;2;85;85;85m2h[0m
+[38;2;0;212;255m·[0m [38;2;255;255;255mNVIDIA surges on blowout Q4 earnings, data center revenue up 409%[0m                                           [38;2;0;212;255mReuters[0m [38;2;85;85;85m3h[0m
+[38;2;0;212;255m·[0m [38;2;255;255;255mApple Vision Pro launches Feb 2 with mixed analyst reception[0m                                                   [38;2;0;212;255mWSJ[0m [38;2;85;85;85m21h[0m"
+`;

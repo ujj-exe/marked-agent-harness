@@ -15,7 +15,7 @@ from market_data.agent_auth import (
     redact_secrets,
     resolve_runtime_credentials,
 )
-from market_data.agent_providers import AGENT_PROVIDERS, codex_headers
+from market_data.agent_providers import AGENT_PROVIDERS, codex_headers, discover_codex_models
 from market_data.agent_providers import resolve_runtime_credentials as resolve_provider
 
 
@@ -52,6 +52,10 @@ class Session:
         return None
 
     def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return next(self.responses)
+
+    def get(self, url, **kwargs):
         self.calls.append((url, kwargs))
         return next(self.responses)
 
@@ -165,6 +169,17 @@ async def test_codex_request_uses_bearer_and_backend_url(monkeypatch, tmp_path):
     assert url == f"{CODEX_BASE_URL}/responses"
     assert request["headers"]["Authorization"] == f"Bearer {access}"
     assert request["headers"]["ChatGPT-Account-ID"] == "acct-123"
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_uses_codex_client_version(monkeypatch, tmp_path):
+    store = CodexAuthStore(tmp_path / "auth.json")
+    store.save_tokens({"access_token": token(), "refresh_token": "refresh-secret"})
+    session = Session([Response(200, {"models": [{"slug": "gpt-6-astra"}]})])
+    monkeypatch.setattr("market_data.agent_providers.aiohttp.ClientSession", factory(session))
+
+    assert await discover_codex_models(store=store) == ["gpt-6-astra"]
+    assert session.calls[0][0] == f"{CODEX_BASE_URL}/models?client_version=0.0.0"
 
 
 @pytest.mark.asyncio

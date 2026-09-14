@@ -1,0 +1,46 @@
+{
+    "name": "marked-agent-harness",
+    "version": "0.1.0",
+    "description": "Marked — India-first financial research terminal and agent runtime",
+    "type": "module",
+    "scripts": {
+        "build": "node scripts/build.js",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:update": "vitest run --update",
+        "smoke": "node scripts/smoke.js",
+        "bench": "node scripts/bench.js"
+    },
+    "bin": {
+        "marked": "bin/marked",
+        "marked-onboard": "bin/marked-onboard",
+        "marked-chart": "bin/marked-chart"
+    },
+    "files": [
+        "bin/",
+        "config/",
+        "data/",
+        "lib/",
+        "runtime/",
+        "src/",
+        "terminal/"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/ujjwalpreenja1308-web/marked-agent-harness.git"
+    },
+    "homepage": "https://github.com/ujjwalpreenja1308-web/marked-agent-harness#readme",
+    "bugs": "https://github.com/ujjwalpreenja1308-web/marked-agent-harness/issues",
+    "license": "MIT",
+    "engines": {
+        "node": ">=20"
+    },
+    "dependencies": {
+        "fast-xml-parser": "^5.5.9",
+        "futu-sdk": "^0.2.6"
+    },
+    "devDependencies": {
+        "esbuild": "^0.28.2",
+        "vitest": "^5.0.0"
+    }
+}

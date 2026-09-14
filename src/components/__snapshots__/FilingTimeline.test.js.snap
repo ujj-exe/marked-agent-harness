@@ -1,0 +1,63 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`filingTimeline > handles a single filing 1`] = `
+"  [38;2;0;212;255mDATE[0m     [38;2;0;212;255mTYPE[0m                     [38;2;0;212;255mDESCRIPTION[0m
+[38;2;85;85;85m───────────────────────────────────────────────────────────────────────────────[0m
+[38;2;85;85;85m└─[0m [38;2;85;85;85mMar 1[0m    [38;2;255;170;0m[exchange_announcement][0m  [38;2;255;255;255mListing announcement[0m"
+`;
+
+exports[`filingTimeline > handles insider disclosures with negative color 1`] = `
+"  [38;2;0;212;255mDATE[0m     [38;2;0;212;255mTYPE[0m                     [38;2;0;212;255mDESCRIPTION[0m
+[38;2;85;85;85m───────────────────────────────────────────────────────────────────────────────[0m
+[38;2;85;85;85m└─[0m [38;2;85;85;85mJan 1[0m    [38;2;255;68;68m[insider_disclosure][0m     [38;2;255;255;255mInsider holding disclosure[0m"
+`;
+
+exports[`filingTimeline > renders a basic filing timeline snapshot 1`] = `
+"  [38;2;0;212;255mDATE[0m     [38;2;0;212;255mTYPE[0m                     [38;2;0;212;255mDESCRIPTION[0m
+[38;2;85;85;85m───────────────────────────────────────────────────────────────────────────────[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mFeb 15[0m   [38;2;0;255;136m[annual_report][0m          [38;2;255;255;255mAnnual report for FY2023[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mJan 10[0m   [38;2;0;212;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q4 FY2023[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mNov 5[0m    [38;2;0;212;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q3 FY2023[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mAug 7[0m    [38;2;0;212;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q2 FY2023[0m
+[38;2;85;85;85m└─[0m [38;2;85;85;85mMay 9[0m    [38;2;0;212;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q1 FY2023[0m"
+`;
+
+exports[`filingTimeline > renders in bloomberg theme 1`] = `
+"  [38;2;255;140;0mDATE[0m     [38;2;255;140;0mTYPE[0m                     [38;2;255;140;0mDESCRIPTION[0m
+[38;2;85;85;85m───────────────────────────────────────────────────────────────────────────────[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mFeb 15[0m   [38;2;0;200;83m[annual_report][0m          [38;2;255;255;255mAnnual report for FY2023[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mJan 10[0m   [38;2;255;140;0m[financial_results][0m      [38;2;255;255;255mFinancial results Q4 FY2023[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mNov 5[0m    [38;2;255;140;0m[financial_results][0m      [38;2;255;255;255mFinancial results Q3 FY2023[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mAug 7[0m    [38;2;255;140;0m[financial_results][0m      [38;2;255;255;255mFinancial results Q2 FY2023[0m
+[38;2;85;85;85m└─[0m [38;2;85;85;85mMay 9[0m    [38;2;255;140;0m[financial_results][0m      [38;2;255;255;255mFinancial results Q1 FY2023[0m"
+`;
+
+exports[`filingTimeline > renders in dracula theme 1`] = `
+"  [38;2;189;147;249mDATE[0m     [38;2;189;147;249mTYPE[0m                     [38;2;189;147;249mDESCRIPTION[0m
+[38;2;98;114;164m───────────────────────────────────────────────────────────────────────────────[0m
+[38;2;98;114;164m│ [0m [38;2;98;114;164mFeb 15[0m   [38;2;80;250;123m[annual_report][0m          [38;2;248;248;242mAnnual report for FY2023[0m
+[38;2;98;114;164m│ [0m [38;2;98;114;164mJan 10[0m   [38;2;189;147;249m[financial_results][0m      [38;2;248;248;242mFinancial results Q4 FY2023[0m
+[38;2;98;114;164m│ [0m [38;2;98;114;164mNov 5[0m    [38;2;189;147;249m[financial_results][0m      [38;2;248;248;242mFinancial results Q3 FY2023[0m
+[38;2;98;114;164m│ [0m [38;2;98;114;164mAug 7[0m    [38;2;189;147;249m[financial_results][0m      [38;2;248;248;242mFinancial results Q2 FY2023[0m
+[38;2;98;114;164m└─[0m [38;2;98;114;164mMay 9[0m    [38;2;189;147;249m[financial_results][0m      [38;2;248;248;242mFinancial results Q1 FY2023[0m"
+`;
+
+exports[`filingTimeline > renders in monochrome theme 1`] = `
+"  [38;2;153;153;153mDATE[0m     [38;2;153;153;153mTYPE[0m                     [38;2;153;153;153mDESCRIPTION[0m
+[38;2;68;68;68m───────────────────────────────────────────────────────────────────────────────[0m
+[38;2;68;68;68m│ [0m [38;2;68;68;68mFeb 15[0m   [38;2;204;204;204m[annual_report][0m          [38;2;255;255;255mAnnual report for FY2023[0m
+[38;2;68;68;68m│ [0m [38;2;68;68;68mJan 10[0m   [38;2;255;255;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q4 FY2023[0m
+[38;2;68;68;68m│ [0m [38;2;68;68;68mNov 5[0m    [38;2;255;255;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q3 FY2023[0m
+[38;2;68;68;68m│ [0m [38;2;68;68;68mAug 7[0m    [38;2;255;255;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q2 FY2023[0m
+[38;2;68;68;68m└─[0m [38;2;68;68;68mMay 9[0m    [38;2;255;255;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q1 FY2023[0m"
+`;
+
+exports[`filingTimeline > renders with narrow width 1`] = `
+"  [38;2;0;212;255mDATE[0m     [38;2;0;212;255mTYPE[0m                     [38;2;0;212;255mDESCRIPTION[0m
+[38;2;85;85;85m───────────────────────────────────────────────────────────[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mFeb 15[0m   [38;2;0;255;136m[annual_report][0m          [38;2;255;255;255mAnnual report for FY20[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mJan 10[0m   [38;2;0;212;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q4 F[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mNov 5[0m    [38;2;0;212;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q3 F[0m
+[38;2;85;85;85m│ [0m [38;2;85;85;85mAug 7[0m    [38;2;0;212;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q2 F[0m
+[38;2;85;85;85m└─[0m [38;2;85;85;85mMay 9[0m    [38;2;0;212;255m[financial_results][0m      [38;2;255;255;255mFinancial results Q1 F[0m"
+`;

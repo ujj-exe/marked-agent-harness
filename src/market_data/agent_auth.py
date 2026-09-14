@@ -314,9 +314,12 @@ async def device_login(
                     "Device code response was incomplete.", code="device_code_incomplete"
                 )
             interval = max(3, int(device.get("interval", 5)))
-            print("OpenAI Codex\nUse your ChatGPT/Codex subscription\n\nSign in with ChatGPT")
-            print(f"\nOpen this URL: {CODEX_AUTH_URL}\nYour code: {user_code}")
-            print("Waiting for sign-in... (press Ctrl+C to cancel)")
+            print(
+                "OpenAI Codex\nUse your ChatGPT/Codex subscription\n\nSign in with ChatGPT",
+                flush=True,
+            )
+            print(f"\nOpen this URL: {CODEX_AUTH_URL}\nYour code: {user_code}", flush=True)
+            print("Waiting for sign-in... (press Ctrl+C to cancel)", flush=True)
             started = time.monotonic()
             code_response = None
             while time.monotonic() - started < max_wait:

@@ -1,42 +1,61 @@
 # Marked Agent Harness
 
-Local authentication and provider transport for the Marked agent harness.
-This repository intentionally does not contain Marked's API server, financial
-dataset, schema, retrieval code, or proprietary data.
+Marked is a full-screen terminal for India-first financial research. It owns
+the terminal UI, local configuration, research orchestration, evidence
+validation, and model-provider lifecycle.
 
-## Install and onboard
+This public repository contains only the local harness. Marked's proprietary
+financial dataset and hosted data service are not included.
+
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ujjwalpreenja1308-web/marked-agent-harness/main/install.sh | sh
 ```
 
-The installer installs and opens the full `marked` terminal. On first run, a
-four-step terminal wizard:
+Installation opens the native Marked terminal and runs four steps using the
+same full-screen UI:
 
-- chooses global (`~/.marked`) or current-repository (`.marked`) scope;
-- securely collects the user's Marked API key;
-- detects Claude Code, Codex CLI, and local Codex auth;
-- discovers Codex models when authenticated; and
-- stores local harness configuration with `0600` permissions.
+1. Choose global or repository configuration.
+2. Paste a Marked API key into a masked field.
+3. Choose Claude Code CLI, Codex CLI, or OpenAI Codex subscription auth.
+4. Choose a model.
 
-After setup, `marked` stays open as an interactive agent with a persistent
-header, chat prompt, model status, Marked MCP tool execution, and slash
-commands. Run it again at any time with:
+Run onboarding again with `marked-onboard`, or open the terminal with `marked`.
 
-```bash
-marked
-```
+## OpenAI Codex
 
-Available commands include `/status`, `/setup`, `/login`, `/logout`, `/clear`,
-and `/exit`.
-
-OpenAI Codex subscription login is separate:
+OpenAI Codex is a first-class provider named `openai-codex`. It authenticates
+through ChatGPT device code and uses the Codex backend—not the standard OpenAI
+API-key endpoint.
 
 ```bash
 marked-auth login
 marked-auth status
+marked-auth models
 marked-auth logout
 ```
 
-Codex credentials are stored locally in `~/.marked/auth.json` (or
-`MARKED_AUTH_FILE`) and are never sent to Marked's data service.
+Codex credentials are stored locally in `~/.marked/auth.json` with user-only
+permissions. Refresh tokens are never returned by status commands, included in
+prompts, written to telemetry, or sent to Marked's data service.
+
+Standard `openai` API-key behavior remains separate from `openai-codex`.
+
+## Development
+
+Requires Node.js 20+ and Python 3.11+.
+
+```bash
+npm install
+npm test
+npm run build
+
+uv sync
+uv run pytest
+uv run ruff check .
+```
+
+## License
+
+MIT

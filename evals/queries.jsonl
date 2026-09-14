@@ -1,0 +1,50 @@
+{"q":"What was Infosys PAT in FY2025?","entity":"Infosys","concepts":["ProfitAfterTax"],"years":[2025],"route":"financial_metric_lookup"}
+{"q":"Reliance revenue FY2026","entity":"Reliance","concepts":["Revenue"],"years":[2026],"route":"financial_metric_lookup"}
+{"q":"TCS net profit last financial year","entity":"TCS","concepts":["ProfitAfterTax"],"route":"financial_metric_lookup"}
+{"q":"What is HDFC Bank's total assets?","entity":"HDFC Bank","concepts":["TotalAssets"],"route":"financial_metric_lookup"}
+{"q":"Wipro EPS FY2025","entity":"Wipro","concepts":["BasicEarningsPerShare"],"years":[2025]}
+{"q":"Infosys EBITDA margin FY2026","entity":"Infosys","concepts":["ebitda_margin"],"years":[2026]}
+{"q":"Reliance borrowings FY2026","entity":"Reliance","concepts":["Borrowings"],"years":[2026]}
+{"q":"Dixon operating cash flow FY2026","entity":"Dixon","concepts":["NetCashFromOperatingActivities"],"years":[2026]}
+{"q":"Asian Paints employee costs FY2026","entity":"Asian Paints","concepts":["EmployeeBenefitExpense"],"years":[2026]}
+{"q":"Trent inventories FY2026","entity":"Trent","concepts":["Inventories"],"years":[2026]}
+{"q":"Why did Reliance PAT grow from FY2024 to FY2026?","entity":"Reliance","concepts":["ProfitAfterTax"],"years":[2024,2025,2026],"route":"financial_analysis"}
+{"q":"What's driving the recent earnings slowdown at Asian Paints?","entity":"Asian Paints","concepts":["ProfitAfterTax"],"route":"financial_analysis"}
+{"q":"Why is Trent's profit growing so fast?","entity":"Trent","concepts":["ProfitAfterTax"],"route":"financial_analysis"}
+{"q":"Is Dixon's growth sustainable?","entity":"Dixon","route":"financial_analysis"}
+{"q":"How is Infosys performing?","entity":"Infosys","route":"financial_analysis"}
+{"q":"Is there anything unusual in Kaynes Technology's cash flow versus reported earnings?","entity":"Kaynes","concepts":["ProfitAfterTax","NetCashFromOperatingActivities"],"route":"financial_analysis"}
+{"q":"Does Tata Elxsi have an earnings-quality problem?","entity":"Tata Elxsi","concepts":["ProfitAfterTax","NetCashFromOperatingActivities"]}
+{"q":"Is Titan's margin expansion durable?","entity":"Titan","route":"financial_analysis"}
+{"q":"What is driving margin pressure at Nestle India?","entity":"Nestle","route":"financial_analysis"}
+{"q":"Has Maruti's working capital deteriorated?","entity":"Maruti","concepts":["Inventories","TradeReceivables","TradePayables"]}
+{"q":"Compare TCS and Infosys PAT in FY2025","entity":"TCS","concepts":["ProfitAfterTax"],"years":[2025],"route":"comparison"}
+{"q":"Compare HDFC Bank and ICICI Bank revenue FY2026","entity":"HDFC Bank","concepts":["Revenue"],"years":[2026],"route":"comparison"}
+{"q":"Wipro vs Infosys margins FY2026","entity":"Wipro","route":"comparison"}
+{"q":"what is the latest share price of reliance","entity":"reliance","route":"price_lookup"}
+{"q":"infosys stock price","entity":"infosys","route":"price_lookup"}
+{"q":"What is TCS trading at?","entity":"TCS","route":"price_lookup"}
+{"q":"Reliance market cap","entity":"Reliance","route":"price_lookup"}
+{"q":"What changed in Reliance's latest filing?","entity":"Reliance","route":"filing_research"}
+{"q":"Did Infosys declare a dividend this year?","entity":"Infosys","route":"event_research"}
+{"q":"Any buyback announced by TCS?","entity":"TCS","route":"event_research"}
+{"q":"asian paints margins","entity":"asian paints","concepts":["net_margin"]}
+{"q":"kaynes revenue FY2026","entity":"kaynes","concepts":["Revenue"],"years":[2026]}
+{"q":"dixon profit after tax FY2025","entity":"dixon","concepts":["ProfitAfterTax"],"years":[2025]}
+{"q":"Infosys return on equity trend","entity":"Infosys","concepts":["return_on_equity"]}
+{"q":"Reliance debt to equity FY2026","entity":"Reliance","concepts":["debt_to_equity"],"years":[2026]}
+{"q":"Tata Steel interest coverage","entity":"Tata Steel","concepts":["interest_coverage"]}
+{"q":"Infosys revenue from FY2023 to FY2026","entity":"Infosys","concepts":["Revenue"],"years":[2023,2024,2025,2026]}
+{"q":"Reliance PAT FY24-FY26","entity":"Reliance","concepts":["ProfitAfterTax"],"years":[2024,2025,2026]}
+{"q":"Trent revenue and profit since FY2023","entity":"Trent","concepts":["Revenue","ProfitAfterTax"]}
+{"q":"Is promoter confidence in Dixon holding up?","entity":"Dixon","datasets":["shareholding"]}
+{"q":"What is promoter holding in Asian Paints?","entity":"Asian Paints","datasets":["shareholding"]}
+{"q":"Reliance cash and cash equivalents FY2026","entity":"Reliance","concepts":["CashAndCashEquivalents"],"years":[2026]}
+{"q":"Infosys free cash flow FY2026","entity":"Infosys","concepts":["NetCashFromOperatingActivities"],"years":[2026]}
+{"q":"Titan total equity FY2026","entity":"Titan","concepts":["TotalEquity"],"years":[2026]}
+{"q":"Bajaj Finance net profit FY2026","entity":"Bajaj Finance","concepts":["ProfitAfterTax"],"years":[2026]}
+{"q":"Adani Ports revenue FY2026","entity":"Adani Ports","concepts":["Revenue"],"years":[2026]}
+{"q":"Maruti Suzuki finance costs FY2026","entity":"Maruti","concepts":["FinanceCosts"],"years":[2026]}
+{"q":"HDFC Bank profit before tax FY2026","entity":"HDFC Bank","concepts":["ProfitBeforeTax"],"years":[2026]}
+{"q":"Sun Pharma depreciation FY2026","entity":"Sun Pharma","concepts":["DepreciationAndAmortisation"],"years":[2026]}
+{"q":"L&T total expenses FY2026","entity":"L&T","concepts":["TotalExpenses"],"years":[2026]}
