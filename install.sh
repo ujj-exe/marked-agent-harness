@@ -33,7 +33,10 @@ main() {
     printf '  [2/2] Installing the Marked terminal…\n'
     # Install Node last so an upgrade from the old Python package cannot remove
     # the `marked` and `marked-onboard` executable links.
-    npm install --global --force "$NODE_SOURCE"
+    # npm cannot replace a package created by `npm link`; remove that exact
+    # package first so both linked development installs and upgrades work.
+    npm uninstall --global --silent marked-agent-harness >/dev/null 2>&1 || true
+    npm install --global "$NODE_SOURCE"
 
     printf '\n  ✓ Installed. Starting onboarding…\n'
     exec marked --onboard

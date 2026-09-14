@@ -5,4 +5,6 @@ __pycache__/
 .ruff_cache/
 .marked/
 dist/
+!terminal/dist/
+!terminal/dist/app.mjs
 node_modules/

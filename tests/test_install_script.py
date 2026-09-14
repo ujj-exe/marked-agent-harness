@@ -5,7 +5,8 @@ def test_install_script_is_posix_shell_and_bootstraps_onboard():
     script = Path(__file__).parents[1] / "install.sh"
     text = script.read_text()
     assert text.startswith("#!/bin/sh\n")
-    assert 'npm install --global --force "$NODE_SOURCE"' in text
+    assert "npm uninstall --global --silent marked-agent-harness" in text
+    assert 'npm install --global "$NODE_SOURCE"' in text
     assert "uv tool install --force --quiet" in text
     assert "Install Node last" in text
     assert "exec marked --onboard" in text
