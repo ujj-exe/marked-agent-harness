@@ -4,8 +4,8 @@ set -eu
 main() {
     REPO_URL=${MARKED_REPO_URL:-https://github.com/ujjwalpreenja1308-web/marked-agent-harness.git}
     REF=${MARKED_REF:-main}
-    NODE_SOURCE=${MARKED_NODE_SOURCE:-${REPO_URL}#${REF}}
     PYTHON_SOURCE=${MARKED_PYTHON_SOURCE:-git+${REPO_URL}@${REF}}
+    INSTALL_DIR=${MARKED_INSTALL_DIR:-$HOME/.marked/harness}
 
     printf '\n  ▐██ MARKED\n'
     printf '  Installing the agent harness…\n\n'
@@ -16,6 +16,10 @@ main() {
     }
     command -v npm >/dev/null 2>&1 || {
         printf '%s\n' "Marked requires npm." >&2
+        exit 1
+    }
+    command -v git >/dev/null 2>&1 || {
+        printf '%s\n' "Marked requires git." >&2
         exit 1
     }
 
@@ -31,15 +35,26 @@ main() {
     fi
 
     printf '  [2/2] Installing the Marked terminal…\n'
-    # Install Node last so an upgrade from the old Python package cannot remove
-    # the `marked` and `marked-onboard` executable links.
-    # npm cannot replace a package created by `npm link`; remove that exact
-    # package first so both linked development installs and upgrades work.
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        git -C "$INSTALL_DIR" pull --quiet --ff-only origin "$REF"
+    elif [ -e "$INSTALL_DIR" ]; then
+        printf '%s\n' "Cannot install: $INSTALL_DIR already exists and is not a Git checkout." >&2
+        exit 1
+    else
+        git clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$INSTALL_DIR"
+    fi
+    npm install --prefix "$INSTALL_DIR" --omit=dev --ignore-scripts --no-audit --no-fund --silent
+
+    BIN_DIR="$(npm prefix --global)/bin"
+    mkdir -p "$BIN_DIR"
     npm uninstall --global --silent marked-agent-harness >/dev/null 2>&1 || true
-    npm install --global "$NODE_SOURCE"
+    ln -sf "$INSTALL_DIR/bin/marked" "$BIN_DIR/marked"
+    ln -sf "$INSTALL_DIR/bin/marked-onboard" "$BIN_DIR/marked-onboard"
+    ln -sf "$INSTALL_DIR/bin/marked-chart" "$BIN_DIR/marked-chart"
 
     printf '\n  ✓ Installed. Starting onboarding…\n'
-    exec marked --onboard
+    exec "$BIN_DIR/marked" --onboard
 }
 
 # A function body is parsed before execution, so a curl pipe can safely hand

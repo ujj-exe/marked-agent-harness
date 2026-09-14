@@ -10,7 +10,7 @@ financial dataset and hosted data service are not included.
 ## Install
 
 ```bash
-curl -fsSL https://github.com/ujjwalpreenja1308-web/marked-agent-harness/releases/download/v0.1.1/install.sh | sh
+curl -fsSL https://github.com/ujjwalpreenja1308-web/marked-agent-harness/releases/download/v0.1.2/install.sh | sh
 ```
 
 Installation opens the native Marked terminal and runs four steps using the

@@ -5,12 +5,12 @@ def test_install_script_is_posix_shell_and_bootstraps_onboard():
     script = Path(__file__).parents[1] / "install.sh"
     text = script.read_text()
     assert text.startswith("#!/bin/sh\n")
-    assert "npm uninstall --global --silent marked-agent-harness" in text
-    assert 'npm install --global "$NODE_SOURCE"' in text
+    assert 'git clone --quiet --depth 1 --branch "$REF"' in text
+    assert 'npm install --prefix "$INSTALL_DIR" --omit=dev --ignore-scripts' in text
+    assert 'ln -sf "$INSTALL_DIR/bin/marked" "$BIN_DIR/marked"' in text
     assert "uv tool install --force --quiet" in text
-    assert "Install Node last" in text
-    assert "exec marked --onboard" in text
-    assert text.index("uv tool install") < text.index("npm install --global")
+    assert 'exec "$BIN_DIR/marked" --onboard' in text
+    assert text.index("uv tool install") < text.index("git clone")
     assert 'main "$@" </dev/tty' in text
     assert "Installing the agent harness" in text
     assert "MARKED_INSTALL_REEXEC" not in text
