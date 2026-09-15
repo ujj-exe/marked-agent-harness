@@ -27,7 +27,7 @@ function configPath(cwd = process.cwd()) {
     dir = parent;
   }
 }
-var MARKED_HOME, CONFIG_PATH, STATE_DIR, SESSIONS_DIR, CONVERSATION_PATH, CAPABILITIES_PATH, ANALYTICS_DIR, TUI_STATE_PATH, REPORTS_DIR;
+var MARKED_HOME, CONFIG_PATH, STATE_DIR, SESSIONS_DIR, CONVERSATION_PATH, CAPABILITIES_PATH, ANALYTICS_DIR, TUI_STATE_PATH, REPORTS_DIR, WORLDS_PATH;
 var init_paths = __esm({
   "config/paths.js"() {
     MARKED_HOME = process.env.MARKED_HOME || path.join(os.homedir(), ".marked");
@@ -39,6 +39,7 @@ var init_paths = __esm({
     ANALYTICS_DIR = path.join(MARKED_HOME, "analytics");
     TUI_STATE_PATH = path.join(MARKED_HOME, "tui.json");
     REPORTS_DIR = path.join(MARKED_HOME, "reports");
+    WORLDS_PATH = path.join(MARKED_HOME, "worlds.json");
   }
 });
 
@@ -2298,7 +2299,8 @@ function holderBar(opts = {}) {
   const hShares = padLeft(pc("label", "SHARES"), sharesW);
   lines.push(`${hName} ${hBar} ${hPct} ${hShares}`);
   lines.push(pc("muted", "\u2500".repeat(Math.min(width, nameW + fillW + pctW + sharesW + 3))));
-  const maxPct = Math.max(...visible.map((h) => Number(h.percent) || 0), 1);
+  const largest = Math.max(...visible.map((h) => Number(h.percent) || 0), 1);
+  const maxPct = Math.max(100, largest);
   for (let i = 0; i < visible.length; i++) {
     const h = visible[i];
     const pct = Number(h.percent) || 0;
@@ -3565,6 +3567,7 @@ function handleRequest(req, res) {
         if (filePayload._state !== void 0) payload._state = filePayload._state;
         if (filePayload.meta !== void 0) payload.meta = filePayload.meta;
         if (filePayload.theme !== void 0) payload.theme = filePayload.theme;
+        if (filePayload.scope !== void 0) payload.scope = filePayload.scope;
         if (filePayload.patch !== void 0) payload.patch = filePayload.patch;
         if (filePayload.layout !== void 0) payload.layout = filePayload.layout;
         if (filePayload.panels !== void 0) payload.panels = filePayload.panels;
@@ -3781,6 +3784,15 @@ var tui = {
   // Runtime query prompt
   queryInput: "",
   overlayBackdrop: null,
+  // What the next question is about — the open Company World, when there is
+  // one. Shown on the command line's rule so the scope is never a guess.
+  scope: null,
+  // World search: live results as the user types.
+  searchMode: false,
+  searchQuery: "",
+  searchResults: [],
+  searchIdx: 0,
+  searchBusy: false,
   queryHistory: [],
   historyIdx: -1
 };
@@ -4046,6 +4058,53 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999, liveTape = []) 
     lines.push(`  ${spin}  ${DIM2}${msg}${RESET2}`);
   }
   return lines.join("\n");
+}
+
+// data/normalization.js
+var MATERIAL_ORDER = [
+  "Revenue",
+  "TotalIncome",
+  "ebitda",
+  "ebitda_margin",
+  "ebit",
+  "ebit_margin",
+  "ProfitBeforeTax",
+  "ProfitAfterTax",
+  "net_margin",
+  "BasicEarningsPerShare",
+  "DilutedEarningsPerShare",
+  "NetCashFromOperatingActivities",
+  "cash_conversion",
+  "NetCashFromInvestingActivities",
+  "NetCashFromFinancingActivities",
+  "FinanceCosts",
+  "interest_coverage",
+  "DepreciationAndAmortisation",
+  "TotalExpenses",
+  "EmployeeBenefitExpense",
+  "CostOfMaterials",
+  "TaxExpense",
+  "effective_tax_rate"
+];
+var MATERIAL_RANK = new Map(MATERIAL_ORDER.map((id, index) => [id, index]));
+function shortDate(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "\u2014";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return formatIst(/* @__PURE__ */ new Date(`${raw}T00:00:00Z`), false);
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw.slice(0, 16);
+  return formatIst(parsed, /T\d{2}:\d{2}/.test(raw) && !/T00:00:00/.test(raw));
+}
+var IST_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function formatIst(date, withTime) {
+  const ist = new Date(date.getTime() + 5.5 * 60 * 60 * 1e3);
+  const day = String(ist.getUTCDate()).padStart(2, "0");
+  const month = IST_MONTHS[ist.getUTCMonth()];
+  const year = String(ist.getUTCFullYear()).slice(2);
+  if (!withTime) return `${day} ${month} ${year}`;
+  const hh = String(ist.getUTCHours()).padStart(2, "0");
+  const mm = String(ist.getUTCMinutes()).padStart(2, "0");
+  return `${day} ${month} ${year} ${hh}:${mm}`;
 }
 
 // terminal/panels.js
@@ -4492,21 +4551,31 @@ function renderTable(spec, width) {
     );
     colWidths.push(maxCellLen + 2);
   }
+  const MIN_COL = 8;
   let totalWidth = colWidths.reduce((a, b) => a + b, 0);
+  while (totalWidth > width) {
+    let widest = 0;
+    for (let c2 = 1; c2 < colCount; c2++) if (colWidths[c2] > colWidths[widest]) widest = c2;
+    if (colWidths[widest] <= MIN_COL) break;
+    const trim = Math.min(colWidths[widest] - MIN_COL, totalWidth - width);
+    colWidths[widest] -= trim;
+    totalWidth -= trim;
+  }
   let visibleCols = colCount;
   while (totalWidth > width && visibleCols > 1) {
     totalWidth -= colWidths[visibleCols - 1];
     visibleCols--;
   }
   function formatCell(val, col, role) {
-    const str = String(val ?? "");
+    let str = String(val ?? "");
+    if (visLen(str) > colWidths[col]) str = ansiTrunc(str, Math.max(1, colWidths[col] - 2)) + "\u2026";
     const autoColored = role ? str : colorTablePercent(str);
     const hasAutoColor = autoColored !== str;
     const w = colWidths[col];
     const a = align[col] ?? "left";
     let padded;
     if (a === "right") {
-      padded = padLeft(autoColored, w);
+      padded = padLeft(autoColored, Math.max(1, w - 1)) + " ";
     } else if (a === "center") {
       const vis = visLen(autoColored);
       const leftPad = Math.floor((w - vis) / 2);
@@ -4579,8 +4648,10 @@ function renderRow(children, width, gap = 2) {
     }
   }
   let result = rendered[0];
+  let leftWidth = resolvedWidths[0];
   for (let i = 1; i < rendered.length; i++) {
-    result = sideBySide(result, rendered[i], resolvedWidths[i - 1], resolvedWidths[i], gap);
+    result = sideBySide(result, rendered[i], leftWidth, resolvedWidths[i], gap);
+    leftWidth += gap + resolvedWidths[i];
   }
   return result;
 }
@@ -4767,6 +4838,22 @@ function renderHelpOverlay(width) {
     K("Ctrl+U", "Clear the line"),
     K("Ctrl+D", "Quit (empty line only)"),
     "",
+    `  ${BRAND}${BOLD2}COMPANY WORLD${RESET2}  ${DIM2}a company as a workspace${RESET2}`,
+    K("/world <company>", "Open a world \u2014 name, ticker, ISIN or CIN"),
+    K("overview \u2026 evidence", "Switch tab \u2014 including NEWS, \u2190 \u2192 to step"),
+    K("/chart <measure>", "revenue \xB7 pat \xB7 roe \xB7 roce \xB7 net_debt \xB7 margins \xB7 price"),
+    K("/chart revenue 5y yoy", "Add a range (1M\u2026MAX) and a view (yoy, indexed, cagr)"),
+    K("<any question>", "Answered about the open company \u2014 no need to name it"),
+    K("\u2190 / \u2192", "Previous / next tab"),
+    K("E12  or  /e 12", "Open the source behind a number"),
+    K("evidence", "Every fact this world retrieved, with references"),
+    K("/world", "Search \u2014 recent companies first, then type to find any"),
+    K("/market", "Rates, the rupee, and the commodity complex"),
+    K("/news rates", "Market news by topic or region \u2014 works anywhere"),
+    K("/news", "In a world: that company. Outside: the whole feed"),
+    K("/compare A B C", "Two to five companies, side by side, same arithmetic"),
+    K("/exit", "Leave the world"),
+    "",
     `  ${BRAND}${BOLD2}FAST PATH${RESET2}  ${DIM2}data only \u2014 no reasoning model, no spend${RESET2}`,
     K("RELIANCE", "A company, straight to its panels"),
     K("FA <company>", "Financial profile"),
@@ -4823,27 +4910,63 @@ function highlightCommand(value) {
 }
 function renderQueryOverlay(width, value = "") {
   const displayValue = /^\/marked\s+\S+$/.test(value) ? value.replace(/^(\/marked\s+)\S+$/, (_match, prefix) => `${prefix}${"\u2022".repeat(value.length - prefix.length)}`) : value;
-  const field = `${LABEL} query ${RESET2}${BRAND}\u203A${RESET2} ${highlightCommand(displayValue)}${BRAND}\u2588${RESET2}`;
+  const ticker = tui.scope?.ticker;
+  const label = ticker ? ` ${ticker} ` : " query ";
+  const field = `${LABEL}${label}${RESET2}${BRAND}\u203A${RESET2} ${highlightCommand(displayValue)}${BRAND}\u2588${RESET2}`;
   return ansiTrunc(field, Math.max(1, width - 1));
 }
-function renderPromptRow(width, value = "") {
+var PROMPT_ROWS = 3;
+function renderPromptBlock(width, value = "", context = void 0) {
   const s = tui.agentState;
   const running = s && (s.stage === "gathering" || s.stage === "analyzing" || s.stage === "resolving");
-  const hint = running ? `${DIM2}^C cancel${RESET2}` : value ? `${DIM2}\u23CE ask  ^C clear${RESET2}` : `${DIM2}/help  ^D quit${RESET2}`;
-  const field = renderQueryOverlay(Math.max(1, width - visLen(hint) - 3), value);
-  const gap = Math.max(1, width - visLen(field) - visLen(hint) - 1);
-  return field + " ".repeat(gap) + hint;
+  const scopeSource = context === void 0 ? tui.scope : context;
+  const detail = typeof scopeSource === "string" ? scopeSource : scopeSource?.detail;
+  const scope = detail ? `${DIM2} ${detail} ${RESET2}` : "";
+  const ruleWidth = Math.max(0, width - visLen(scope));
+  const rule = `${DIM2}${"\u2500".repeat(ruleWidth)}${RESET2}${scope}`;
+  const field = renderQueryOverlay(Math.max(1, width - 1), value);
+  const hints = running ? [`${BRAND}\u25B8\u25B8${RESET2} ${DIM2}working${RESET2}`, "^C cancel", "PgUp/Dn scroll"] : value ? [`${BRAND}\u25B8\u25B8${RESET2} ${DIM2}\u23CE to ask${RESET2}`, "^C clear", "^G help"] : [`${BRAND}\u25B8\u25B8${RESET2} ${DIM2}type to ask${RESET2}`, "/help", "^S save", "^O load", "^D quit"];
+  const hint = hints[0] + `${DIM2}` + hints.slice(1).map((part) => `  ${part}`).join("") + `${RESET2}`;
+  return [rule, field, ansiTrunc(hint, width)];
 }
-function runLayout(layoutOrBlocks, panels, width, focused) {
+function runLayout(layoutOrBlocks, panels, width, focused, rows = null) {
   try {
-    if (Array.isArray(layoutOrBlocks)) {
-      return renderBlocks(layoutOrBlocks, width);
-    }
-    const blocks = presetToBlocks(layoutOrBlocks, panels ?? {});
-    return renderBlocks(blocks, width);
+    const blocks = Array.isArray(layoutOrBlocks) ? layoutOrBlocks : presetToBlocks(layoutOrBlocks, panels ?? {});
+    return fillHeight(blocks, width, rows);
   } catch (err) {
     return `${DIM2}\u26A0 Render error: ${err.message}${RESET2}`;
   }
+}
+var CHROME_ROWS = 2 + PROMPT_ROWS;
+function fillHeight(blocks, width, rows) {
+  const once = renderBlocks(blocks, width);
+  if (!rows || !Array.isArray(blocks)) return once;
+  const growable = findGrowable(blocks);
+  if (!growable) return once;
+  const available = rows - CHROME_ROWS;
+  const used = once.split("\n").length;
+  const slack = available - used;
+  if (slack < 2) return once;
+  const current = Number(growable.data?.height) || 0;
+  const grown = blocks.map((block) => substitute(block, growable, current + slack));
+  return renderBlocks(grown, width);
+}
+function findGrowable(blocks) {
+  for (const block of blocks) {
+    if (block?.grow && block.data) return block;
+    const children = block?.row ?? block?.stack;
+    if (Array.isArray(children)) {
+      const found = findGrowable(children);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+function substitute(block, target, height) {
+  if (block === target) return { ...block, data: { ...block.data, height } };
+  if (Array.isArray(block?.row)) return { ...block, row: block.row.map((child) => substitute(child, target, height)) };
+  if (Array.isArray(block?.stack)) return { ...block, stack: block.stack.map((child) => substitute(child, target, height)) };
+  return block;
 }
 function fitSides(left, right, width) {
   if (visLen(right) >= width) return ansiTrunc(right, Math.max(0, width));
@@ -4881,7 +5004,7 @@ function buildFooter(width) {
       if (progress.etaSeconds != null) parts.push(`${DIM2}~${progress.etaSeconds}s left${RESET2}`);
     }
     const left2 = parts.join(` ${DIM2}\xB7${RESET2} `);
-    const keys2 = `${DIM2}^C cancel  PgUp/Dn scroll${RESET2}`;
+    const keys2 = "";
     return fitSides(left2, keys2, width);
   }
   const toolsCalled = tui.agentState?.tools?.called;
@@ -4894,15 +5017,10 @@ function buildFooter(width) {
     modelLabel ? `${DIM2}${modelLabel}${RESET2}` : null,
     toolsLabel ? `${DIM2}${toolsLabel}${RESET2}` : null,
     costStr,
-    m.as_of ? `${DIM2}${m.as_of}${RESET2}` : null
+    m.as_of ? `${DIM2}${shortDate(m.as_of)} IST${RESET2}` : null
   ].filter(Boolean).join(sep);
   const left = `  ${gradMark} ${meshLabel}` + (meta ? `${sep}${meta}` : "");
-  let keys;
-  if (s?.stage === "complete" && s?.follow_ups?.length > 0) {
-    keys = `${DIM2}/1-/${s.follow_ups.length} drill  PgUp/Dn scroll  ^S save  ^G help${RESET2}`;
-  } else {
-    keys = `${DIM2}PgUp/Dn scroll  ^S save  ^O load  ^G help  ^D quit${RESET2}`;
-  }
+  const keys = s?.stage === "complete" && s?.follow_ups?.length > 0 ? `${DIM2}/1-/${s.follow_ups.length} to drill${RESET2}` : "";
   return fitSides(left, keys, width);
 }
 function renderLoadOverlay(width) {
@@ -4999,9 +5117,9 @@ function applyShimmer(content) {
 }
 var _animTimer = null;
 function footerRow(totalLines, rows) {
-  const rowsForContent = rows - 1;
+  const rowsForContent = rows - PROMPT_ROWS;
   if (totalLines <= rowsForContent) return totalLines;
-  return rows - 2;
+  return rows - PROMPT_ROWS - 1;
 }
 function startRenderAnimation() {
   stopRenderAnimation();
@@ -5078,25 +5196,26 @@ function paintWithScroll(clear = true) {
   const totalLines = allLines.length;
   allLines[0] = buildHeader(w);
   displayContent = allLines.join("\n");
-  const promptRow = renderPromptRow(w, tui.queryInput ?? "");
-  const rowsForContent = rows - 1;
+  const promptBlock = renderPromptBlock(w, tui.queryInput ?? "", tui.scope ?? null);
+  const paintPrompt = () => promptBlock.map((line, index) => `\x1B[${rows - PROMPT_ROWS + 1 + index};1H\x1B[2K${line}`).join("");
+  const rowsForContent = rows - PROMPT_ROWS;
   if (totalLines <= rowsForContent) {
     if (clear) {
-      process.stdout.write("\x1B[2J\x1B[H" + displayContent + `\x1B[${rows};1H\x1B[2K` + promptRow);
+      process.stdout.write("\x1B[2J\x1B[H" + displayContent + paintPrompt());
     } else {
       const padded = allLines.map((l) => l + " ".repeat(Math.max(0, w - visLen(l)))).join("\n");
       process.stdout.write("\x1B[H" + padded);
-      for (let r = totalLines + 1; r < rows; r++) {
+      for (let r = totalLines + 1; r <= rows - PROMPT_ROWS; r++) {
         process.stdout.write(`\x1B[${r};1H\x1B[2K`);
       }
-      process.stdout.write(`\x1B[${rows};1H\x1B[2K` + promptRow);
+      process.stdout.write(paintPrompt());
     }
     return;
   }
   const stickyLine = allLines[0];
   const bodyLines = allLines.slice(1, allLines.length - 1);
   const footerLine = allLines[allLines.length - 1];
-  const bodyRows = rows - 4;
+  const bodyRows = rows - 3 - PROMPT_ROWS;
   const maxOffset = Math.max(0, bodyLines.length - bodyRows);
   tui.scrollOffset = Math.max(0, Math.min(tui.scrollOffset, maxOffset));
   const offset = tui.scrollOffset;
@@ -5104,9 +5223,9 @@ function paintWithScroll(clear = true) {
   const atTop = offset === 0;
   const atBottom = offset >= maxOffset;
   const pct = maxOffset > 0 ? Math.round(offset / maxOffset * 100) : 0;
-  const indicator = `${DIM2}` + (atTop ? " " : " \u25B2 ") + `${offset + 1}\u2013${Math.min(offset + viewLines.length, bodyLines.length)}/${bodyLines.length}` + (atBottom ? "" : " \u25BC") + ` ${atBottom ? "END" : pct + "%"}  \u2191\u2193/jk scroll  PgUp/Dn  g top  G end${RESET2}`;
+  const indicator = `${DIM2}` + (atTop ? " " : " \u25B2 ") + `${offset + 1}\u2013${Math.min(offset + viewLines.length, bodyLines.length)}/${bodyLines.length}` + (atBottom ? "" : " \u25BC") + ` ${atBottom ? "END" : pct + "%"}  PgUp/Dn page  ^\u2191/^\u2193 line  Home/End ends${RESET2}`;
   const safeHeader = visLen(stickyLine) > w ? ansiTrunc(stickyLine, w) : stickyLine;
-  const allOutput = [safeHeader, ...viewLines, footerLine, indicator, promptRow];
+  const allOutput = [safeHeader, ...viewLines, footerLine, indicator, ...promptBlock];
   let buf = clear ? "\x1B[2J" : "";
   for (let r = 0; r < allOutput.length; r++) {
     const line = allOutput[r];
@@ -5119,6 +5238,45 @@ function paintWithScroll(clear = true) {
   }
   buf += `\x1B[${rows};1H`;
   process.stdout.write(buf);
+}
+function renderSearchOverlay(width) {
+  const lines = [
+    "",
+    `  ${LIME_D}\u2590${LIME_M}\u2588${BRAND}\u2588${RESET2} ${BRAND}${BOLD2}MARKED${RESET2}  ${LABEL}WORLD SEARCH${RESET2}`,
+    `${DIM2}${"\u2500".repeat(width)}${RESET2}`,
+    "",
+    `  ${LABEL} find ${RESET2}${BRAND}\u203A${RESET2} ${tui.searchQuery || ""}${BRAND}\u2588${RESET2}`,
+    `  ${DIM2}name \xB7 ticker \xB7 ISIN \xB7 CIN${tui.searchBusy ? " \xB7 searching\u2026" : ""}${RESET2}`,
+    `  ${DIM2}\u2191\u2193 navigate \xB7 Enter open \xB7 Esc cancel${RESET2}`,
+    ""
+  ];
+  if (!tui.searchQuery) {
+    if (tui.searchResults.length) {
+      lines.push(`  ${DIM2}RECENT${RESET2}`);
+      tui.searchResults.forEach((hit, index) => {
+        const active = index === tui.searchIdx;
+        const cursor = active ? `${BRAND}\u25B6${RESET2}` : " ";
+        const name = ansiTrunc(hit.name ?? "", Math.max(20, Math.floor(width * 0.45)));
+        const detail = [hit.symbol, hit.tab].filter(Boolean).join(" \xB7 ");
+        lines.push(`  ${cursor} ${active ? `${BOLD2}${LABEL}${name}${RESET2}` : name}   ${DIM2}${detail}${RESET2}`);
+      });
+      return lines.join("\n");
+    }
+    lines.push(`  ${DIM2}Type to search every listed company Marked covers.${RESET2}`);
+    return lines.join("\n");
+  }
+  if (!tui.searchResults.length) {
+    lines.push(`  ${DIM2}${tui.searchBusy ? "Searching\u2026" : `Nothing matches \u201C${tui.searchQuery}\u201D`}${RESET2}`);
+    return lines.join("\n");
+  }
+  tui.searchResults.forEach((hit, index) => {
+    const active = index === tui.searchIdx;
+    const cursor = active ? `${BRAND}\u25B6${RESET2}` : " ";
+    const name = ansiTrunc(hit.name ?? "", Math.max(20, Math.floor(width * 0.45)));
+    const detail = [hit.symbol, hit.exchange, hit.isin].filter(Boolean).join(" \xB7 ");
+    lines.push(`  ${cursor} ${active ? `${BOLD2}${LABEL}${name}${RESET2}` : name}   ${DIM2}${detail}${RESET2}`);
+  });
+  return lines.join("\n");
 }
 
 // terminal/scroll.js
@@ -5159,7 +5317,7 @@ async function healthCheck() {
   let markedUp = false;
   try {
     const response = await fetch("https://api.marked.run/v1/");
-    markedUp = response.status !== 401 && response.status < 500;
+    markedUp = response.status < 500;
   } catch {
     markedUp = false;
   }
@@ -5219,7 +5377,7 @@ function repaint() {
   if (tui.phase === "splash") return;
   if (tui.loadMode || tui.modelMode || tui.askMode) return;
   const w = getWidth();
-  const output = runLayout(tui.blocks ?? tui.layout, tui.blocks ? null : tui.panels, w, tui.focused);
+  const output = runLayout(tui.blocks ?? tui.layout, tui.blocks ? null : tui.panels, w, tui.focused, getHeight());
   paintScreen(output, !tui.isPatch);
   tui.isPatch = false;
 }
@@ -5285,6 +5443,18 @@ function onRender(payload) {
     openInput(payload._state.input);
     return;
   }
+  if (payload._state && payload._state.search) {
+    const search = payload._state.search;
+    if (!tui.searchMode) openSearch(search);
+    else {
+      if (search.query !== void 0 && search.query !== tui.searchQuery) return;
+      tui.searchResults = Array.isArray(search.results) ? search.results : [];
+      tui.searchIdx = 0;
+      tui.searchBusy = false;
+      drawSearch();
+    }
+    return;
+  }
   if (payload.meta && typeof payload.meta === "object") {
     tui.renderMeta = { ...tui.renderMeta, ...payload.meta };
   }
@@ -5334,6 +5504,7 @@ function onRender(payload) {
   if (payload.theme) {
     applyTheme(payload.theme);
   }
+  if ("scope" in payload) tui.scope = payload.scope || null;
   repaint();
 }
 function onFocus(payload) {
@@ -5364,7 +5535,9 @@ function onSplash(payload) {
   if (tui.phase === "splash") startSplashAnimation();
 }
 function drawQueryPrompt() {
-  process.stdout.write(`\x1B[${getHeight()};1H\x1B[2K${renderPromptRow(getWidth(), tui.queryInput)}`);
+  const rows = getHeight();
+  const block = renderPromptBlock(getWidth(), tui.queryInput, tui.scope ?? null);
+  process.stdout.write(block.map((line, index) => `\x1B[${rows - block.length + 1 + index};1H\x1B[2K${line}`).join(""));
 }
 function clearPrompt() {
   tui.queryInput = "";
@@ -5418,6 +5591,12 @@ function hideOverlay() {
   }
 }
 function closeAnyOverlay() {
+  if (tui.searchMode) {
+    closeSearch();
+    submitQuery("/wpick cancel").catch(() => {
+    });
+    return true;
+  }
   if (tui.modelMode) {
     closeModelPicker();
     return true;
@@ -5451,6 +5630,45 @@ function paintOrSplash() {
   stopSplashAnimation();
   tui.phase = "splash";
   startSplashAnimation();
+}
+var _searchTimer = null;
+function openSearch(payload = {}) {
+  tui.searchMode = true;
+  tui.searchQuery = payload.query ?? "";
+  tui.searchResults = Array.isArray(payload.results) ? payload.results : [];
+  tui.searchIdx = 0;
+  tui.searchBusy = false;
+  tui.phase = "live";
+  stopSplashAnimation();
+  showOverlay(renderSearchOverlay(getWidth()));
+}
+function closeSearch() {
+  if (_searchTimer) {
+    clearTimeout(_searchTimer);
+    _searchTimer = null;
+  }
+  tui.searchMode = false;
+  tui.searchQuery = "";
+  tui.searchResults = [];
+  tui.searchBusy = false;
+  hideOverlay();
+  paintOrSplash();
+}
+function drawSearch() {
+  const overlay = renderSearchOverlay(getWidth());
+  tui.lastContent = overlay;
+  process.stdout.write("\x1B[2J\x1B[H" + overlay);
+}
+function queueSearch() {
+  if (_searchTimer) clearTimeout(_searchTimer);
+  tui.searchBusy = Boolean(tui.searchQuery);
+  drawSearch();
+  if (!tui.searchQuery) return;
+  _searchTimer = setTimeout(() => {
+    _searchTimer = null;
+    submitQuery(`/wsearch ${tui.searchQuery}`).catch(() => {
+    });
+  }, 160);
 }
 function openModelPicker() {
   tui.modelCurrent = currentModel();
@@ -5676,6 +5894,39 @@ function handleKeypress(ch, key) {
     process.stdout.write("\x1B[2J\x1B[H" + renderInputOverlay(getWidth()) + "\x1B[?25h");
     return;
   }
+  if (tui.searchMode) {
+    if (key.name === "escape") {
+      closeSearch();
+      submitQuery("/wpick cancel").catch(() => {
+      });
+      return;
+    }
+    if (key.name === "up") {
+      tui.searchIdx = Math.max(0, tui.searchIdx - 1);
+      return drawSearch();
+    }
+    if (key.name === "down") {
+      tui.searchIdx = Math.min(tui.searchResults.length - 1, tui.searchIdx + 1);
+      return drawSearch();
+    }
+    if (key.name === "return") {
+      if (!tui.searchResults.length) return;
+      const chosen = tui.searchIdx;
+      closeSearch();
+      submitQuery(`/wpick ${chosen + 1}`).catch(() => {
+      });
+      return;
+    }
+    if (key.name === "backspace") {
+      tui.searchQuery = tui.searchQuery.slice(0, -1);
+      return queueSearch();
+    }
+    if (typeof ch === "string" && ch.length === 1 && !key.ctrl && !key.meta) {
+      tui.searchQuery += ch;
+      return queueSearch();
+    }
+    return;
+  }
   if (tui.askMode) {
     if (key.name === "escape") {
       submitQuery("/pick cancel").catch(() => {
@@ -5752,6 +6003,11 @@ function handleKeypress(ch, key) {
   if (key.ctrl && key.name === "s") return saveCurrentReport();
   if (key.ctrl && key.name === "o") return openLoadPicker();
   if (key.ctrl && key.name === "u") return clearPrompt();
+  if ((key.name === "left" || key.name === "right") && tui.scope?.ticker && !tui.queryInput) {
+    submitQuery(`/tab ${key.name === "right" ? "next" : "prev"}`).catch(() => {
+    });
+    return;
+  }
   if (key.name === "return") return void sendQueryInput();
   if (key.name === "up") return recallHistory(1);
   if (key.name === "down") return recallHistory(-1);

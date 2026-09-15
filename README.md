@@ -351,10 +351,71 @@ holding and pledge changes, reads results, annual reports, presentations,
 disclosures, events and corporate actions, and returns a thesis with bull case,
 bear case, catalysts, invalidation conditions and evidence-linked claims.
 
-Inside the terminal: `n` to ask, `?` for the keyboard reference, `/model` to
-switch runtime, `/marked <key>` to save a new key, `/new` and `/history` for
-conversation, `s` and `l` to save and load reports, `1` to `9` to run a
-suggested follow-up, `q` to step back. `marked --help` prints all of it.
+### Company World
+
+A company is a place you enter, not a name you repeat. `/world` opens a search
+that resolves a name, ticker, ISIN or CIN to one canonical company, and from
+that point the prompt reads `INFY ›` and every question is about Infosys until
+`/exit`. Nothing outside a world changes: ordinary questions and every command
+above behave exactly as they did.
+
+Inside, eleven tabs are views over a single retrieval — Overview, Chart,
+Financials, Ownership, Filings, Events, Valuation, Peers, Risk, News, Research
+and Evidence. Switching between them re-renders from memory rather than
+fetching again, which is what makes it read as a workstation instead of a queue
+of queries. `←` and `→` step through them, or type the name. Reopening a
+company restores the tab and chart you left it on; the data is always fetched
+fresh, because showing last week's figure as current is the one failure this
+cannot afford.
+
+Follow-up questions inherit the company, so `why did working capital move?`
+needs no name in it.
+
+### Charts, comparison and context
+
+`/chart revenue 5y`, `/chart roe yoy`, `/chart revenue vs TCS`. Every series
+comes from the metric library or the reported facts, never from arithmetic the
+chart did itself, so a margin drawn here and a margin printed in the Financials
+table are the same number by construction. Fundamentals render as labelled bars
+rather than a line, because four annual points drawn as a line is a shape with
+no information in it. Comparing an absolute measure rebases it to 100, since
+comparing ₹1.47 lakh crore against ₹2.25 lakh crore as bars says only which
+company is larger.
+
+`/compare INFY TCS HCLTECH` puts two to five companies side by side on the same
+arithmetic, with a second table naming which one leads on each measure and in
+which direction — more revenue growth is better, more receivable days is not.
+
+`/market` is the tape every Indian company is priced against: the policy repo
+rate, the rupee, and the commodity complex. `/news` is the feed, narrowable by
+topic or region, with a per-company tab inside a world. Publisher and tier lead,
+because "the exchange said it" and "a newspaper said it" are different claims.
+Both datasets travel in the research packet, so a question about what Middle
+East oil does to a refiner is answered from the oil price, the headlines and the
+company's own margins together rather than from a linkage the model invented.
+
+### Evidence
+
+Every retrieved fact carries a short reference, `E12`, which appears beside the
+figures built on it. Typing it opens the record: the measure, the value, the
+period, the basis, the document, the source URL, and the restatement trail —
+every version of that number ever published. Derived ratios cite their inputs,
+so return on equity names the profit and the equity it divided, and each of
+those opens its own filing.
+
+Published-at and known-at are kept apart throughout. The first is when a filing
+appeared; the second is when the number could first have been acted on, and a
+point-in-time answer depends on the difference.
+
+### Keys
+
+The command line is always open — there is no key that starts a question, you
+type. `Enter` asks, `↑` and `↓` recall previous questions, `Ctrl+C` abandons a
+running query without leaving the app, and `Ctrl+D` quits from an empty line.
+`Ctrl+G` shows the full reference, `Ctrl+S` saves a report, `Ctrl+O` loads one,
+and `PgUp`/`PgDn` scroll. `/model` switches runtime, `/marked <key>` saves a
+key, `/new` and `/history` manage the conversation, and `/1` to `/9` run a
+suggested follow-up. `marked --help` prints all of it.
 
 ## Quick start
 
