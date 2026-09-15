@@ -218,6 +218,14 @@ describe('paintScreen → paintWithScroll', () => {
     expect(() => paintScreen(longContent)).not.toThrow();
   });
 
+  it('does not clear the terminal for a patch repaint', () => {
+    const longContent = Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n');
+    paintScreen(longContent);
+    writes.length = 0;
+    paintScreen(longContent.replace('line 0', 'patched'), false);
+    expect(writes.join('')).not.toContain('\x1b[2J');
+  });
+
   it('does not throw when paintWithScroll is called repeatedly', () => {
     const longContent = Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n');
     paintScreen(longContent);

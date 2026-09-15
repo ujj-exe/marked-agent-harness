@@ -1,6 +1,6 @@
 {
     "name": "marked-agent-harness",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "description": "Marked \u2014 India-first financial research terminal and agent runtime",
     "type": "module",
     "scripts": {

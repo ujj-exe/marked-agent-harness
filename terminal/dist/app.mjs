@@ -3189,7 +3189,7 @@ var ANALYTICS_MAX_BYTES = 5 * 1024 * 1024;
 var VALID_ACTIONS = /* @__PURE__ */ new Set(["render", "focus", "layout", "clear"]);
 var _require = createRequire(import.meta.url);
 function _resolveVersion() {
-  if (true) return "0.2.0";
+  if (true) return "0.2.1";
   try {
     return _require("../package.json").version;
   } catch {
@@ -3687,7 +3687,7 @@ init_paths();
 import { createRequire as createRequire2 } from "module";
 var _require2 = createRequire2(import.meta.url);
 function _resolveVersion2() {
-  if (true) return "0.2.0";
+  if (true) return "0.2.1";
   try {
     return _require2("../package.json").version;
   } catch {
@@ -5060,7 +5060,7 @@ function paintScreen(content, resetScroll = true) {
   const cleanContent = filtered.slice(startIdx).join("\n");
   tui.lastContent = header + "\n" + cleanContent + (actionBar ? "\n" + actionBar : "") + "\n" + footer;
   if (resetScroll) tui.scrollOffset = 0;
-  paintWithScroll();
+  paintWithScroll(resetScroll);
 }
 function paintWithScroll(clear = true) {
   const rows = process.stdout.rows ?? 24;
@@ -5107,7 +5107,7 @@ function paintWithScroll(clear = true) {
   const indicator = `${DIM2}` + (atTop ? " " : " \u25B2 ") + `${offset + 1}\u2013${Math.min(offset + viewLines.length, bodyLines.length)}/${bodyLines.length}` + (atBottom ? "" : " \u25BC") + ` ${atBottom ? "END" : pct + "%"}  \u2191\u2193/jk scroll  PgUp/Dn  g top  G end${RESET2}`;
   const safeHeader = visLen(stickyLine) > w ? ansiTrunc(stickyLine, w) : stickyLine;
   const allOutput = [safeHeader, ...viewLines, footerLine, indicator, promptRow];
-  let buf = "\x1B[2J";
+  let buf = clear ? "\x1B[2J" : "";
   for (let r = 0; r < allOutput.length; r++) {
     const line = allOutput[r];
     buf += `\x1B[${r + 1};1H`;

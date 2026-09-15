@@ -467,7 +467,7 @@ export function paintScreen(content, resetScroll = true) {
   const cleanContent = filtered.slice(startIdx).join('\n');
   tui.lastContent = header + '\n' + cleanContent + (actionBar ? '\n' + actionBar : '') + '\n' + footer;
   if (resetScroll) tui.scrollOffset = 0;
-  paintWithScroll();
+  paintWithScroll(resetScroll);
 }
 
 export function paintWithScroll(clear = true) {
@@ -538,7 +538,7 @@ export function paintWithScroll(clear = true) {
 
   // Render with explicit cursor addressing per row — no wrap issues
   const allOutput = [safeHeader, ...viewLines, footerLine, indicator, promptRow];
-  let buf = '\x1b[2J'; // clear screen
+  let buf = clear ? '\x1b[2J' : '';
   for (let r = 0; r < allOutput.length; r++) {
     const line = allOutput[r];
     buf += `\x1b[${r + 1};1H`; // cursor to row r+1, col 1
