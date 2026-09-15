@@ -1,5 +1,6 @@
 import { buildEvidence, financialFactEvidence, validateClaims, validateFinancialFacts } from '../data/evidence.js';
-import { isPercent, LABELS, normalizeFinancialRows } from '../data/normalization.js';
+import { isPercent, LABELS, normalizeFinancialRows, shortDate } from '../data/normalization.js';
+import { REQUIRED_CONCEPTS } from '../data/metrics.js';
 import { conversationHistory, createSession, saveSession } from './session.js';
 import { promptForResult, validateResearchResult } from './output-schema.js';
 import { classifyIntent, looksLikeCompanyReference } from './intent.js';
@@ -37,7 +38,7 @@ export class MarkedOrchestrator {
     this.agent?.cancel?.();
   }
 
-  async run(question, { asOf = new Date().toISOString(), agentName = this.agent.name, conversation, intentOverride, plan, dataOnly = false, route: routeOverride, pointInTime = false } = {}) {
+  async run(question, { asOf = new Date().toISOString(), agentName = this.agent.name, conversation, intentOverride, plan, dataOnly = false, suppressBlocks = false, route: routeOverride, pointInTime = false } = {}) {
     this.aborted = false;
     const session = createSession(question, { agent: agentName, asOf });
     session.conversation_id = conversation?.conversation_id;
@@ -117,10 +118,10 @@ export class MarkedOrchestrator {
     // "Reliance" where the legacy regex yields "Reliance's latest filing".
     const reference = dataPlan.references[0] || intent.references[0] || question.trim();
     const entity = await this.data.resolveCompany(reference);
-    return this.runCompany(session, entity, { question, asOf, agentName, state, reference, conversation, mode: session.mode, temporal: session.temporal, route: routeOverride ?? dataPlan.route, dataOnly, pointInTime });
+    return this.runCompany(session, entity, { question, asOf, agentName, state, reference, conversation, mode: session.mode, temporal: session.temporal, route: routeOverride ?? dataPlan.route, dataOnly, suppressBlocks, pointInTime });
   }
 
-  async runCompany(session, entity, { question, asOf, agentName, state, reference, conversation, mode, temporal, route = 'factual_lookup', dataOnly = false, pointInTime = false }) {
+  async runCompany(session, entity, { question, asOf, agentName, state, reference, conversation, mode, temporal, route = 'factual_lookup', dataOnly = false, suppressBlocks = false, pointInTime = false }) {
     session.entity = entity;
     const security = selectEquity(entity.securities);
     if (!security?.symbol) throw new Error(`No tradable security found for ${reference}`);
@@ -132,7 +133,7 @@ export class MarkedOrchestrator {
         { panel: 'quote', id: 'quote', data: { ticker: security.symbol, name: entity.company.common_name, price: null, changePct: 0, marketCap: 0 } },
         { text: `${entity.company.legal_name || entity.company.common_name || reference} · ${security.exchange}:${security.symbol} · ${security.isin || entity.company.isin || 'ISIN unavailable'}` },
       ],
-      _state: { stage: 'gathering', agent: agentName, query: question, tools: { called: 1, total: 7, current: 'prices' } },
+      _state: { stage: 'gathering', agent: agentName, query: question, tools: { called: 1, total: 11, current: 'prices' } },
     });
 
     let called = 1;
@@ -163,7 +164,7 @@ export class MarkedOrchestrator {
       await this.tui.render({
         patch: true,
         blocks,
-        _state: { stage: 'gathering', agent: agentName, query: question, tools: { called, total: 7, current: label } },
+        _state: { stage: 'gathering', agent: agentName, query: question, tools: { called, total: 11, current: label } },
       });
       return value;
     };
@@ -190,6 +191,38 @@ export class MarkedOrchestrator {
     const years = narrative ? 2 : 5;
     const scopedFinancials = temporal ? scopeFiscalYear(financials, temporal.fiscal_year) : recentFiscalYears(financials, years);
     const scopedMetrics = temporal ? scopeFiscalYear(metrics, temporal.fiscal_year) : recentFiscalYears(metrics, years);
+    // The latest quote carries what the OHLCV series does not: the real 52-week
+    // range, the day's move, and market capitalisation. The header was deriving
+    // a 30-day proxy for all three.
+    const quote = await gather(
+      'quote loaded',
+      () => this.data.quote
+        ? this.data.quote({ symbol: security.symbol, exchange: security.exchange || 'NSE' })
+        : Promise.resolve({ data: null }),
+    );
+    // News and the macro tape are not company filings, but a question like
+    // "what does Middle East oil do to this company" cannot be answered from
+    // filings alone. Both are retrieved with the packet so the reasoning step
+    // has them to hand rather than inventing the linkage.
+    const news = await gather(
+      'news loaded',
+      () => this.data.news
+        ? this.data.news({ ticker: security.symbol, limit: 20 })
+        : Promise.resolve({ data: [] }),
+    );
+    const market = await gather(
+      'market context loaded',
+      () => this.data.marketContext ? this.data.marketContext() : Promise.resolve({ data: null }),
+    );
+    const balance = await gather(
+      'balance sheet loaded',
+      () => this.data.balanceSheet
+        // Ask for exactly the concepts the metric library reads. An unfiltered
+        // request is truncated by the server and drops the newest year, which
+        // is the one every ratio needs.
+        ? this.data.balanceSheet({ ticker: security.symbol, basis: 'consolidated', as_of: asOf, limit: 400, concept: REQUIRED_CONCEPTS.join(',') })
+        : Promise.resolve({ data: [] }),
+    );
     const shareholding = await gather(
       'shareholding loaded',
       () => this.data.shareholding({ ticker: security.symbol, holders: true, limit: 4, ...at }),
@@ -203,10 +236,10 @@ export class MarkedOrchestrator {
     const actions = await gather('corporate actions loaded', () => this.data.corporateActions({ ticker: security.symbol, limit: 10, ...at }));
     const events = await gather('events loaded', () => this.data.events({ ticker: security.symbol, limit: 10, ...at }));
 
-    const checked = checkFinancials({ entity, security, financials: scopedFinancials, metrics: scopedMetrics });
+    const checked = checkFinancials({ entity, security, financials: scopedFinancials, metrics: scopedMetrics, balance });
     const packet = {
       focus: route,
-      entity, security, price, shareholding, filings, actions, events, temporal,
+      entity, security, price, quote, shareholding, filings, actions, events, temporal, balance, news, market,
       financial_facts: checked.facts, rejected_rows: checked.rejected.length,
       financials: scopedFinancials, metrics: scopedMetrics,
     };
@@ -233,7 +266,7 @@ export class MarkedOrchestrator {
       { table: eventTable(events, actions) },
     ];
     const blocks = narrative ? [...disclosureBlocks, ...financialBlocks.filter(block => block.id !== 'filings')] : financialBlocks;
-    return this.complete(session, { question, asOf, agentName, state, packet, evidence, blocks, totalTools: 7, conversation, mode, dataOnly });
+    return this.complete(session, { question, asOf, agentName, state, packet, evidence, blocks, totalTools: 11, conversation, mode, dataOnly, suppressBlocks });
   }
 
   async runCompare(session, intent, { question, asOf, agentName, state, conversation, mode }) {
@@ -596,7 +629,7 @@ export class MarkedOrchestrator {
     });
   }
 
-  async complete(session, { question, asOf, agentName, state, packet, evidence, blocks, totalTools, conversation, mode = session.mode || 'research', dataOnly = false }) {
+  async complete(session, { question, asOf, agentName, state, packet, evidence, blocks, totalTools, conversation, mode = session.mode || 'research', dataOnly = false, suppressBlocks = false }) {
     blocks = meaningful(blocks);
     session.packet = packet;
     session.evidence = evidence;
@@ -605,9 +638,12 @@ export class MarkedOrchestrator {
     // retrieved panels are the whole answer, so stop here: no prompt is built,
     // no provider is launched, and nothing is spent.
     if (dataOnly) {
+      // A caller that renders its own view of this packet — a Company World —
+      // asks for the data without the default panels, so the user does not see
+      // one layout flash and get replaced by another.
       await this.tui.render({
         patch: true,
-        blocks,
+        ...(suppressBlocks ? {} : { blocks }),
         _state: { stage: 'complete', agent: agentName, query: question, follow_ups: [], tools: { called: totalTools, total: totalTools, current: null } },
         meta: { as_of: asOf },
       });
@@ -635,7 +671,7 @@ export class MarkedOrchestrator {
       evidence: compactEvidenceList(session.evidence, session.packet?.financial_facts ?? []),
     };
     const procedure = session.skill ? `\n\nDesk procedure (${session.skill}):\n${loadSkill(session.skill)}` : '';
-    const prompt = `${promptForResult()}\n\nYou are the reasoning engine inside Marked. Analyze the supplied Indian-market research packet. Marked data is canonical. Do not retrieve data or invent facts. Separate facts, inferences, opinions and external context. Use evidence_ids for material factual claims. State consolidated/standalone basis, units and dates. For macro, derivatives or other external coverage, say when the packet is unavailable or secondary. Every number you state must come from packet.financial_facts or packet.derived_metrics and cite that fact's evidence_id; query, search and planning records are context only and can never supply a value. Anything listed in packet.data_gaps is unavailable — say so plainly and do not estimate, interpolate or substitute it. Output mode is ${mode}: factual lookups must answer directly and leave catalysts, risks, bull_case, bear_case and invalidation empty; comparative answers should emphasize differences; analytical and research answers may use the full thesis/catalysts/risks structure; event answers should focus on the event and date; screening answers should focus on matched companies and coverage.${procedure}\n\n${JSON.stringify(context)}`;
+    const prompt = `${promptForResult()}\n\nYou are the reasoning engine inside Marked. Analyze the supplied Indian-market research packet. Marked data is canonical. Do not retrieve data or invent facts. Separate facts, inferences, opinions and external context. Use evidence_ids for material factual claims. State consolidated/standalone basis, units and dates. For macro, derivatives or other external coverage, say when the packet is unavailable or secondary. packet.market_context carries FX, commodity and policy-rate levels with their moves, and packet.news carries headlines with a publisher and a source tier: use them to explain how external conditions bear on this company, cite the url for any claim drawn from a headline, and never state a causal link the data does not support - an oil price and a refiner's margin moving together is a relationship worth naming, not a proven cause. Every number you state must come from packet.financial_facts or packet.derived_metrics and cite that fact's evidence_id; query, search and planning records are context only and can never supply a value. Anything listed in packet.data_gaps is unavailable — say so plainly and do not estimate, interpolate or substitute it. Output mode is ${mode}: factual lookups must answer directly and leave catalysts, risks, bull_case, bear_case and invalidation empty; comparative answers should emphasize differences; analytical and research answers may use the full thesis/catalysts/risks structure; event answers should focus on the event and date; screening answers should focus on matched companies and coverage.${procedure}\n\n${JSON.stringify(context)}`;
     const startedAt = new Date().toISOString();
     session.agent_run = { provider: agentName, started_at: startedAt, status: 'running' };
     let result;
@@ -715,6 +751,7 @@ export class MarkedOrchestrator {
 function compactPacket(packet = {}) {
   const {
     financials, metrics, price, entity, security, filings, events, actions, shareholding,
+    news, market, quote, balance,
     financial_facts: facts, companies, data_plan: dataPlan, narrative_evidence: narrative, ...rest
   } = packet;
   return {
@@ -735,6 +772,10 @@ function compactPacket(packet = {}) {
     ...(price ? { price: compactPrices(price) } : {}),
     ...(shareholding ? { shareholding: records(shareholding?.data ?? shareholding).slice(0, 2).map(strip) } : {}),
     ...(filings ? { filings: records(filings?.data ?? filings).slice(0, 10).map(pick(['document_id', 'title', 'document_type', 'published_at', 'source_url'])) } : {}),
+    // Headlines and their tier, not article bodies: the model is being given
+    // what was reported and by whom, and must cite the url for any claim.
+    ...(news ? { news: records(news?.data ?? news).slice(0, 15).map(pick(['headline', 'publisher', 'source_tier', 'published_at', 'topics', 'regions', 'url'])) } : {}),
+    ...(market ? { market_context: compactMarket(market) } : {}),
     ...(events ? { events: records(events?.data ?? events).slice(0, 10).map(pick(['event_id', 'event_type', 'title', 'event_at', 'source_url'])) } : {}),
     ...(actions ? { actions: records(actions?.data ?? actions).slice(0, 10).map(pick(['action_type', 'ex_date', 'record_date', 'value', 'description'])) } : {}),
   };
@@ -1046,7 +1087,7 @@ function scopeFiscalYear(value, fiscalYear) {
   return { ...value, data: rows.filter(row => Number(row.fiscal_year) === Number(fiscalYear)) };
 }
 
-function metricSeries(value, concepts = []) {
+export function metricSeries(value, concepts = []) {
   const rows = records(value?.data ?? value);
   return concepts.slice(0, 3).map(concept => ({
     concept,
@@ -1063,16 +1104,16 @@ function priceRows(value) {
     .sort((a, b) => String(a.ts || a.date || '').localeCompare(String(b.ts || b.date || '')));
 }
 
-function latestPrice(value) {
+export function latestPrice(value) {
   const rows = priceRows(value);
   return rows.length ? Number(rows[rows.length - 1].close) : null;
 }
 
-function priceChart(value, label) {
+export function priceChart(value, label) {
   return { label, height: 8, values: priceRows(value).map(item => Number(item.close)) };
 }
 
-function priceCandles(value, label) {
+export function priceCandles(value, label) {
   return {
     label,
     bars: priceRows(value).map(item => ({
@@ -1086,24 +1127,32 @@ function priceCandles(value, label) {
  * Validate a company's reported facts and derived ratios, so nothing reaches the
  * packet carrying a financial data type it has not earned.
  */
-function checkFinancials({ entity, security, financials, metrics }) {
+function checkFinancials({ entity, security, financials, metrics, balance }) {
   const context = {
     companyId: entity?.company?.company_id ?? null,
     companyName: entity?.company?.common_name ?? null,
     ticker: security?.symbol ?? null,
   };
   const reported = validateFinancialFacts(records(financials?.data ?? financials), context);
+  // Balance-sheet rows go through the same gate as everything else. They used
+  // to bypass it, so equity and borrowings reached the metric layer with no
+  // evidence id and every ratio built on them cited nothing.
+  const positions = validateFinancialFacts(records(balance?.data ?? balance), context);
   const derived = validateFinancialFacts(flattenMetricRows(records(metrics?.data ?? metrics)), { ...context, dataType: 'metric' });
-  const facts = [...reported.facts, ...derived.facts];
-  return { facts, rejected: [...reported.rejected, ...derived.rejected], evidence: financialFactEvidence(facts) };
+  const facts = [...reported.facts, ...positions.facts, ...derived.facts];
+  return {
+    facts,
+    rejected: [...reported.rejected, ...positions.rejected, ...derived.rejected],
+    evidence: financialFactEvidence(facts),
+  };
 }
 
 function collectEvidence(companyId, sources) {
   return sources.flatMap(([value, dataType]) => buildEvidence(records(value?.data ?? value), { companyId, dataType }));
 }
 
-function financialTable(financials, metrics) {
-  const rows = normalizeFinancialRows(financials, metrics).map(item => ({
+export function financialTable(financials, metrics) {
+  const rows = normalizeFinancialRows(financials, metrics, { limit: 80 }).map(item => ({
     cells: [item.metric, item.value, item.period, item.basis, item.classification], colors: {},
   }));
   return { headers: ['Metric', 'Value', 'Period', 'Basis', 'Class'], rows: rows.length ? rows : [{ cells: ['No Marked financial facts returned', '—', '—', '—', '—'] }] };
@@ -1211,7 +1260,7 @@ const OWNERSHIP_BANDS = [
   ['pledged_pct', 'Pledged'],
 ];
 
-function holderPanel(data) {
+export function holderPanel(data) {
   const latest = records(data?.data ?? data)[0] || {};
 
   const named = (Array.isArray(latest.holders) ? latest.holders : [])
@@ -1229,15 +1278,15 @@ function holderPanel(data) {
   return { holders: bands, asOf: latest.period_end || null };
 }
 
-function filingPanel(data) {
+export function filingPanel(data) {
   return { filings: records(data?.data ?? data).slice(0, 8).map(item => ({ date: item.published_at || item.filing_date || item.date || '', form: item.document_type || item.type || 'disclosure', description: item.title || item.description || '' })) };
 }
 
-function eventTable(events, actions) {
-  return { headers: ['Date', 'Type', 'Title'], rows: [...records(events?.data ?? events), ...records(actions?.data ?? actions)].slice(0, 12).map(item => ({ cells: [item.event_at || item.ex_date || item.date || '—', item.event_type || item.action_type || 'action', item.title || item.description || '—'] })) };
+export function eventTable(events, actions, limit = 12) {
+  return { headers: ['Date', 'Type', 'Title'], rows: [...records(events?.data ?? events), ...records(actions?.data ?? actions)].slice(0, Math.max(1, limit)).map(item => ({ cells: [shortDate(item.event_at || item.ex_date || item.date), item.event_type || item.action_type || 'action', item.title || item.description || '—'] })) };
 }
 
-function sourceTable(evidence) {
+export function sourceTable(evidence) {
   return { headers: ['Evidence', 'Type', 'Period', 'Source'], rows: evidence.slice(0, 16).map(item => ({ cells: [item.evidence_id, item.data_type, item.period || '—', item.source_url || item.title || 'Marked'] })) };
 }
 
@@ -1250,7 +1299,7 @@ function followUps(items = []) {
   }));
 }
 
-function verdictPanel(result, warnings, mode = 'research') {
+export function verdictPanel(result, warnings, mode = 'research') {
   if (['factual', 'event'].includes(mode)) {
     return {
       title: mode.toUpperCase(),
@@ -1333,4 +1382,24 @@ function formatThreshold(metric, value) {
   return /margin|yield|growth|return|ratio|pct|percent|pledge|promoter|fii|dii|mutual|public|holding/i.test(metric) && Math.abs(value) <= 1
     ? `${(value * 100).toFixed(1)}%`
     : String(value);
+}
+
+/**
+ * The macro tape, reduced to levels and moves.
+ *
+ * Each series keeps its own evidence in the full packet; the prompt gets the
+ * number, what it measures and how far it has travelled, which is what a
+ * question about oil or the rupee actually turns on.
+ */
+function compactMarket(market) {
+  const data = market?.data ?? market;
+  if (!data || typeof data !== 'object') return null;
+  const reduce = (section) => Object.fromEntries(Object.entries(section ?? {})
+    .filter(([, row]) => row?.available !== false)
+    .map(([key, row]) => [key, {
+      name: row.name, value: row.value, unit: row.unit,
+      change_1d: row.change_1d, change_1m: row.change_1m,
+      as_of: row.as_of ?? row.observation_period ?? null,
+    }]));
+  return { as_of: data.as_of ?? null, fx: reduce(data.fx), commodities: reduce(data.commodities), macro: reduce(data.macro) };
 }
