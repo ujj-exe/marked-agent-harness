@@ -53,8 +53,12 @@ export function holderBar(opts = {}) {
   lines.push(`${hName} ${hBar} ${hPct} ${hShares}`);
   lines.push(pc('muted', '─'.repeat(Math.min(width, nameW + fillW + pctW + sharesW + 3))));
 
-  // Find max percent for scaling bars
-  const maxPct = Math.max(...visible.map(h => Number(h.percent) || 0), 1);
+  // Ownership percentages are absolute, so the track is 100% — not the largest
+  // holder. Scaling to the maximum drew a promoter holding 50.5% as a full bar,
+  // which reads as "owns all of it". Only a set that genuinely exceeds 100
+  // (named holders double-counted across categories) rescales to fit.
+  const largest = Math.max(...visible.map(h => Number(h.percent) || 0), 1);
+  const maxPct = Math.max(100, largest);
 
   for (let i = 0; i < visible.length; i++) {
     const h     = visible[i];

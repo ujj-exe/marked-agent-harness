@@ -91,8 +91,25 @@ function renderTable(spec, width) {
     colWidths.push(maxCellLen + 2); // +2 padding
   }
 
-  // Truncate rightmost columns if total exceeds width
+  // Narrow the widest column before dropping any.
+  //
+  // A single verbose cell — one filing title — used to cost the whole column
+  // its place, so an events table rendered Date and Type and silently lost
+  // every Title. Shrinking the widest column truncates that one cell instead,
+  // which loses a few characters rather than a field. Columns are still
+  // dropped if the table cannot fit even at the minimum width.
+  const MIN_COL = 8;
   let totalWidth = colWidths.reduce((a, b) => a + b, 0);
+  while (totalWidth > width) {
+    let widest = 0;
+    for (let c = 1; c < colCount; c++) if (colWidths[c] > colWidths[widest]) widest = c;
+    if (colWidths[widest] <= MIN_COL) break;
+    const trim = Math.min(colWidths[widest] - MIN_COL, totalWidth - width);
+    colWidths[widest] -= trim;
+    totalWidth -= trim;
+  }
+
+  // Only now, if it still does not fit, give up the rightmost columns.
   let visibleCols = colCount;
   while (totalWidth > width && visibleCols > 1) {
     totalWidth -= colWidths[visibleCols - 1];
@@ -107,14 +124,20 @@ function renderTable(spec, width) {
    * @returns {string}
    */
   function formatCell(val, col, role) {
-    const str = String(val ?? '');
+    let str = String(val ?? '');
+    // A cell that was cut should say so. Silently clipping reads as the whole
+    // value, which is the one thing a table of reported figures must not do.
+    if (visLen(str) > colWidths[col]) str = ansiTrunc(str, Math.max(1, colWidths[col] - 2)) + '…';
     const autoColored = role ? str : colorTablePercent(str);
     const hasAutoColor = autoColored !== str;
     const w = colWidths[col];
     const a = align[col] ?? 'left';
     let padded;
     if (a === 'right') {
-      padded = padLeft(autoColored, w);
+      // Right-aligned cells put all their padding on the left, so the value
+      // ended up flush against the next column — "5.25%rates". One column of
+      // the cell's own width is kept as a gutter.
+      padded = padLeft(autoColored, Math.max(1, w - 1)) + ' ';
     } else if (a === 'center') {
       const vis = visLen(autoColored);
       const leftPad = Math.floor((w - vis) / 2);
@@ -224,10 +247,17 @@ function renderRow(children, width, gap = 2) {
     }
   }
 
-  // Merge horizontally
+  // Merge horizontally, left to right.
+  //
+  // The accumulated block grows with every fold, so the left width has to grow
+  // with it. Passing the previous *column's* width truncated everything
+  // already merged down to that column — a three-column row silently lost its
+  // middle child, and no error said so.
   let result = rendered[0];
+  let leftWidth = resolvedWidths[0];
   for (let i = 1; i < rendered.length; i++) {
-    result = sideBySide(result, rendered[i], resolvedWidths[i - 1], resolvedWidths[i], gap);
+    result = sideBySide(result, rendered[i], leftWidth, resolvedWidths[i], gap);
+    leftWidth += gap + resolvedWidths[i];
   }
   return result;
 }

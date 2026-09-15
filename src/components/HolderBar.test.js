@@ -118,3 +118,30 @@ describe('holderBar', () => {
     expect(result).toMatchSnapshot();
   });
 });
+
+describe('bar scale', () => {
+  const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+  const filled = line => (strip(line).match(/█/g) || []).length;
+  const track = line => (strip(line).match(/[█░]/g) || []).length;
+
+  // Bars used to scale to the largest holder, so a promoter holding 50.5%
+  // filled the whole track and read as owning all of it.
+  it('measures a percentage against 100, not against the biggest holder', () => {
+    const out = holderBar({ holders: [{ name: 'Promoter', percent: 50 }, { name: 'Public', percent: 10 }], width: 90 });
+    const [promoter] = out.split('\n').filter(l => strip(l).startsWith('Promoter'));
+    expect(filled(promoter) / track(promoter)).toBeGreaterThan(0.45);
+    expect(filled(promoter) / track(promoter)).toBeLessThan(0.55);
+  });
+
+  it('keeps a small holding visibly small', () => {
+    const out = holderBar({ holders: [{ name: 'Pledged', percent: 2 }], width: 90 });
+    const [row] = out.split('\n').filter(l => strip(l).startsWith('Pledged'));
+    expect(filled(row) / track(row)).toBeLessThan(0.1);
+  });
+
+  it('rescales only when the set genuinely exceeds 100', () => {
+    const out = holderBar({ holders: [{ name: 'A', percent: 150 }, { name: 'B', percent: 75 }], width: 90 });
+    const [a] = out.split('\n').filter(l => strip(l).startsWith('A'));
+    expect(filled(a) / track(a)).toBeGreaterThan(0.9);
+  });
+});

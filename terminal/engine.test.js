@@ -546,3 +546,102 @@ describe('edge cases', () => {
     expect(renderBlock({ unknownKey: 'value' }, 80)).toBe('');
   });
 });
+
+describe('table column fitting', () => {
+  const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+  const long = 'x'.repeat(200);
+
+  // One verbose filing title used to cost the whole Title column its place, so
+  // an events table rendered Date and Type and silently lost every title.
+  it('keeps every column when one cell is too long, narrowing instead of dropping', () => {
+    const out = strip(renderBlocks([{ table: {
+      headers: ['Date', 'Type', 'Title'],
+      rows: [{ cells: ['11 Sep 26', 'filing', long] }, { cells: ['10 Sep 26', 'other', 'Updates'] }],
+    } }], 80));
+    expect(out).toContain('Title');
+    expect(out).toContain('Updates');
+  });
+
+  it('marks a cut cell so it does not read as the whole value', () => {
+    const out = strip(renderBlocks([{ table: {
+      headers: ['A', 'B'], rows: [{ cells: ['short', long] }],
+    } }], 40));
+    expect(out).toContain('…');
+  });
+
+  it('never exceeds the width it was given', () => {
+    for (const width of [40, 80, 120]) {
+      const out = strip(renderBlocks([{ table: {
+        headers: ['A', 'B', 'C'],
+        rows: [{ cells: [long, long, long] }],
+      } }], width));
+      for (const line of out.split('\n')) expect(line.length).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it('still drops columns when even minimum widths cannot fit', () => {
+    const out = strip(renderBlocks([{ table: {
+      headers: ['A', 'B', 'C', 'D', 'E', 'F'],
+      rows: [{ cells: ['aaaa', 'bbbb', 'cccc', 'dddd', 'eeee', 'ffff'] }],
+    } }], 20));
+    for (const line of out.split('\n')) expect(line.length).toBeLessThanOrEqual(20);
+  });
+});
+
+describe('multi-column rows', () => {
+  const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+  const table = name => ({ table: { headers: [name, 'Value'], rows: [{ cells: ['a', '1'] }] } });
+
+  // Folding left-to-right passed the previous column's width as the
+  // accumulated one, so everything already merged was truncated away and the
+  // middle child of a three-column row vanished without an error.
+  it('keeps every child of a three-column row', () => {
+    const out = strip(renderBlocks([{ row: [
+      { w: 0.44, stack: [table('Chart')] },
+      { w: 0.28, stack: [table('Metric')] },
+      { w: 0.28, stack: [table('Ratio')] },
+    ], gap: 2 }], 196));
+    for (const header of ['Chart', 'Metric', 'Ratio']) expect(out).toContain(header);
+  });
+
+  it('keeps every child when widths are automatic', () => {
+    const out = strip(renderBlocks([{ row: [table('One'), table('Two'), table('Three'), table('Four')] }], 200));
+    for (const header of ['One', 'Two', 'Three', 'Four']) expect(out).toContain(header);
+  });
+
+  it('still stacks when the columns would be too narrow to read', () => {
+    const out = strip(renderBlocks([{ row: [table('One'), table('Two'), table('Three')] }], 40));
+    for (const header of ['One', 'Two', 'Three']) expect(out).toContain(header);
+  });
+
+  it('never exceeds the width it was given', () => {
+    const out = strip(renderBlocks([{ row: [
+      { w: 0.44, stack: [table('Chart')] }, { w: 0.28, stack: [table('Metric')] }, { w: 0.28, stack: [table('Ratio')] },
+    ] }], 120));
+    for (const line of out.split('\n')) expect(line.length).toBeLessThanOrEqual(120);
+  });
+});
+
+describe('right-aligned columns', () => {
+  const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+
+  // Right alignment put every pad column on the left, so a value ran straight
+  // into the next header — "5.25%rates".
+  it('keeps a gutter after a right-aligned cell', () => {
+    const out = strip(renderBlocks([{ table: {
+      headers: ['Series', 'Value', 'Category'],
+      align: ['left', 'right', 'left'],
+      rows: [{ cells: ['RBI policy repo rate', '5.25%', 'rates'] }],
+    } }], 100));
+    expect(out).toContain('5.25% rates');
+    expect(out).not.toContain('5.25%rates');
+  });
+
+  it('still fits the width it was given', () => {
+    const out = strip(renderBlocks([{ table: {
+      headers: ['A', 'B'], align: ['left', 'right'],
+      rows: [{ cells: ['x'.repeat(60), '1234567890'] }],
+    } }], 40));
+    for (const line of out.split('\n')) expect(line.length).toBeLessThanOrEqual(40);
+  });
+});
