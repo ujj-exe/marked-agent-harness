@@ -541,6 +541,7 @@ function handleRequest(req, res) {
           if (filePayload._state !== undefined) payload._state = filePayload._state;
           if (filePayload.meta !== undefined) payload.meta = filePayload.meta;
           if (filePayload.theme !== undefined) payload.theme = filePayload.theme;
+          if (filePayload.scope !== undefined) payload.scope = filePayload.scope;
           if (filePayload.patch !== undefined) payload.patch = filePayload.patch;
           if (filePayload.layout !== undefined) payload.layout = filePayload.layout;
           if (filePayload.panels !== undefined) payload.panels = filePayload.panels;

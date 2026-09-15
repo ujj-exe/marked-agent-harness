@@ -4,9 +4,10 @@
  * Covers: focusIndicator, renderHelpOverlay, buildFooter state variants.
  */
 
+import { renderBlocks } from './engine.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tui } from './state.js';
-import { focusIndicator, renderHelpOverlay, renderInputOverlay, renderQueryOverlay, buildFooter, buildHeader, paintScreen, paintWithScroll, footerRow } from './render.js';
+import { focusIndicator, renderHelpOverlay, renderInputOverlay, renderQueryOverlay, buildFooter, buildHeader, paintScreen, paintWithScroll, footerRow, PROMPT_ROWS, renderPromptBlock, fillHeight } from './render.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -115,8 +116,10 @@ describe('buildFooter', () => {
   it('renders standard footer with no agent state', () => {
     const result = buildFooter(80);
     expect(strip(result)).toContain('MARKED');
-    expect(strip(result)).toContain('save');
-    expect(strip(result)).toContain('quit');
+    // Shortcuts live on the command line's hint row now; showing them here too
+    // put the same five on screen twice.
+    expect(strip(result)).not.toContain('save');
+    expect(strip(result)).not.toContain('quit');
   });
 
   it('renders gathering state footer with spinner and tool progress', () => {
@@ -168,7 +171,7 @@ describe('buildFooter', () => {
       ],
     };
     const result = buildFooter(120);
-    expect(strip(result)).toContain('/1-/2 drill');
+    expect(strip(result)).toContain('/1-/2 to drill');
   });
 
   it('renders meta in footer when present', () => {
@@ -246,14 +249,22 @@ describe('footerRow', () => {
   // The spinner repaints the footer every 110ms at this row. When it drifted
   // from the full paint's geometry it drew a second footer over the scroll
   // indicator — two "Analyzing" lines stacked on screen.
-  it('keeps the last row for the prompt when content fits', () => {
+  it('leaves the command line its three rows when content fits', () => {
     expect(footerRow(10, 24)).toBe(10);
-    expect(footerRow(23, 24)).toBe(23);
+    expect(footerRow(21, 24)).toBe(21);        // 24 − 3 is the last content row
   });
 
-  it('sits above the indicator and the prompt when content overflows', () => {
-    // rows 1..24 = header, body…, footer(22), indicator(23), prompt(24)
-    expect(footerRow(500, 24)).toBe(22);
+  it('sits above the indicator and the command line when content overflows', () => {
+    // rows 1..24 = header, body…, footer(20), indicator(21), rule(22), field(23), hints(24)
+    expect(footerRow(500, 24)).toBe(20);
+  });
+
+  it('never collides with the command line', () => {
+    for (const rows of [12, 24, 40, 80]) {
+      for (const total of [1, rows - 4, rows, 1000]) {
+        expect(footerRow(total, rows)).toBeLessThanOrEqual(rows - PROMPT_ROWS);
+      }
+    }
   });
 
   it('never returns the prompt row', () => {
@@ -262,5 +273,102 @@ describe('footerRow', () => {
         expect(footerRow(total, rows)).toBeLessThan(rows);
       }
     }
+  });
+});
+
+describe('renderPromptBlock', () => {
+  const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+  // Earlier suites in this file leave a running agentState behind, and the
+  // hint line reads it.
+  beforeEach(() => { tui.agentState = null; });
+
+  it('is a rule, the field and a hint line', () => {
+    const block = renderPromptBlock(80, '');
+    expect(block).toHaveLength(PROMPT_ROWS);
+    expect(strip(block[0])).toMatch(/^─+$/);
+    expect(strip(block[1])).toContain('query');
+    expect(strip(block[2])).toContain('type to ask');
+  });
+
+  it('shows what the next question is about, on the rule', () => {
+    const block = renderPromptBlock(80, '', { detail: 'RELIANCE · NSE' });
+    expect(strip(block[0])).toContain('RELIANCE · NSE');
+    expect(strip(block[0]).length).toBeLessThanOrEqual(80);
+  });
+
+  it('offers the key that matters for the state it is in', () => {
+    expect(strip(renderPromptBlock(80, 'why did margins fall')[2])).toContain('⏎ to ask');
+  });
+
+  it('never exceeds the width it was given', () => {
+    for (const width of [40, 80, 200]) {
+      for (const line of renderPromptBlock(width, 'x'.repeat(300), { detail: 'SCOPE' })) {
+        expect(strip(line).length).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+});
+
+describe('the prompt carries the scope', () => {
+  const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+  beforeEach(() => { tui.agentState = null; tui.scope = null; });
+
+  it('reads "query" outside a world', () => {
+    expect(strip(renderPromptBlock(80, '')[1])).toContain('query ›');
+  });
+
+  it('becomes the ticker inside one, so the scope is never a thing to remember', () => {
+    tui.scope = { ticker: 'INFY', detail: 'NSE:INFY · CONSOLIDATED · CHART' };
+    const block = renderPromptBlock(80, '');
+    expect(strip(block[1])).toContain('INFY ›');
+    expect(strip(block[1])).not.toContain('query ›');
+    expect(strip(block[0])).toContain('NSE:INFY · CONSOLIDATED · CHART');
+  });
+
+  it('still shows what is typed', () => {
+    tui.scope = { ticker: 'INFY' };
+    expect(strip(renderPromptBlock(80, 'why did margins fall')[1])).toContain('why did margins fall');
+  });
+});
+
+describe('fillHeight', () => {
+  const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+  const chart = (height) => ({ panel: 'chart', grow: true, data: { values: [1, 2, 3, 4, 5], height } });
+  const table = (n) => ({ table: { headers: ['A'], rows: Array.from({ length: n }, (_, i) => ({ cells: [`r${i}`] })) } });
+
+  // A block builder cannot know how tall its output will be, so guessing a
+  // share of the screen left a tall terminal two-thirds empty.
+  it('gives the leftover rows to the block that asked for them', () => {
+    const short = fillHeight([chart(8), table(2)], 100, 60).split('\n').length;
+    const tall = fillHeight([chart(8), table(2)], 100, 20).split('\n').length;
+    expect(short).toBeGreaterThan(tall);
+  });
+
+  it('fills close to the space available', () => {
+    const rows = 50;
+    const used = fillHeight([chart(8), table(3)], 100, rows).split('\n').length;
+    expect(used).toBeLessThanOrEqual(rows - PROMPT_ROWS - 2);
+    expect(used).toBeGreaterThan(rows - PROMPT_ROWS - 2 - 3);
+  });
+
+  it('leaves content alone when it already overflows', () => {
+    const blocks = [chart(8), table(80)];
+    expect(fillHeight(blocks, 100, 24)).toBe(renderBlocks(blocks, 100));
+  });
+
+  it('changes nothing when no block wants to grow', () => {
+    const blocks = [table(3)];
+    expect(fillHeight(blocks, 100, 60)).toBe(renderBlocks(blocks, 100));
+  });
+
+  it('finds a growable block nested inside a row', () => {
+    const nested = [{ row: [{ w: 0.5, stack: [chart(8)] }, { w: 0.5, stack: [table(2)] }] }];
+    const filled = fillHeight(nested, 120, 50).split('\n').length;
+    expect(filled).toBeGreaterThan(renderBlocks(nested, 120).split('\n').length);
+  });
+
+  it('renders normally when the terminal height is unknown', () => {
+    const blocks = [chart(8), table(2)];
+    expect(fillHeight(blocks, 100, null)).toBe(renderBlocks(blocks, 100));
   });
 });

@@ -35,7 +35,7 @@ import { logStateTransition } from './debugLog.js';
 
 import { BRAND, DIM, RESET, REPORTS_DIR, tui, getBlockType, applyPatch, applyTheme } from './state.js';
 import { renderSplash, SPINNER_FRAMES } from './splash.js';
-import { runLayout, buildFooter, renderLoadOverlay, renderModelOverlay, renderAskOverlay, renderInputOverlay, renderHelpOverlay, renderPromptRow, focusIndicator, paintScreen, paintWithScroll, startRenderAnimation, stopRenderAnimation } from './render.js';
+import { runLayout, buildFooter, renderLoadOverlay, renderModelOverlay, renderAskOverlay, renderInputOverlay, renderHelpOverlay, renderPromptBlock, renderSearchOverlay, focusIndicator, paintScreen, paintWithScroll, startRenderAnimation, stopRenderAnimation } from './render.js';
 import { setupMouseWheel, isMouseRecent, isMouseSequenceActive } from './scroll.js';
 import { healthCheck, saveReport, listReports, submitQuery } from './io.js';
 import { currentModel, listModels } from '../config/models.js';
@@ -67,7 +67,7 @@ function repaint() {
   if (tui.phase === 'splash') return; // splash has its own animation
   if (tui.loadMode || tui.modelMode || tui.askMode) return;
   const w = getWidth();
-  const output = runLayout(tui.blocks ?? tui.layout, tui.blocks ? null : tui.panels, w, tui.focused);
+  const output = runLayout(tui.blocks ?? tui.layout, tui.blocks ? null : tui.panels, w, tui.focused, getHeight());
   paintScreen(output, !tui.isPatch);
   tui.isPatch = false;
 }
@@ -143,6 +143,20 @@ function onRender(payload) {
     openInput(payload._state.input);
     return;
   }
+  if (payload._state && payload._state.search) {
+    const search = payload._state.search;
+    if (!tui.searchMode) openSearch(search);
+    else {
+      // Results for a query the user has since changed are stale; the newer
+      // keystroke already has its own request in flight.
+      if (search.query !== undefined && search.query !== tui.searchQuery) return;
+      tui.searchResults = Array.isArray(search.results) ? search.results : [];
+      tui.searchIdx = 0;
+      tui.searchBusy = false;
+      drawSearch();
+    }
+    return;
+  }
 
   // Capture meta (model, tools, cost, as_of) for dynamic footer
   if (payload.meta && typeof payload.meta === 'object') {
@@ -207,6 +221,8 @@ function onRender(payload) {
   if (payload.theme) {
     applyTheme(payload.theme);
   }
+  // `scope` is sent as null to clear it, so presence is what matters here.
+  if ('scope' in payload) tui.scope = payload.scope || null;
 
   repaint();
 }
@@ -250,7 +266,11 @@ function onSplash(payload) {
  * that is what made the old overlay flicker on every character.
  */
 function drawQueryPrompt() {
-  process.stdout.write(`\x1b[${getHeight()};1H\x1b[2K${renderPromptRow(getWidth(), tui.queryInput)}`);
+  const rows = getHeight();
+  const block = renderPromptBlock(getWidth(), tui.queryInput, tui.scope ?? null);
+  process.stdout.write(block
+    .map((line, index) => `\x1b[${rows - block.length + 1 + index};1H\x1b[2K${line}`)
+    .join(''));
 }
 
 function clearPrompt() {
@@ -319,6 +339,7 @@ function hideOverlay() {
 
 /** Every modal answers to one key, so there is always a way out. */
 function closeAnyOverlay() {
+  if (tui.searchMode) { closeSearch(); submitQuery('/wpick cancel').catch(() => {}); return true; }
   if (tui.modelMode) { closeModelPicker(); return true; }
   if (tui.loadMode)  { tui.loadMode = false; hideOverlay(); paintOrSplash(); return true; }
   if (tui.helpVisible) { toggleHelp(); return true; }
@@ -333,6 +354,54 @@ function paintOrSplash() {
   tui.phase = 'splash';
   startSplashAnimation();
 }
+// ── World search ─────────────────────────────────────────────────────────────
+
+let _searchTimer = null;
+
+function openSearch(payload = {}) {
+  tui.searchMode = true;
+  tui.searchQuery = payload.query ?? '';
+  tui.searchResults = Array.isArray(payload.results) ? payload.results : [];
+  tui.searchIdx = 0;
+  tui.searchBusy = false;
+  tui.phase = 'live';
+  stopSplashAnimation();
+  showOverlay(renderSearchOverlay(getWidth()));
+}
+
+function closeSearch() {
+  if (_searchTimer) { clearTimeout(_searchTimer); _searchTimer = null; }
+  tui.searchMode = false;
+  tui.searchQuery = '';
+  tui.searchResults = [];
+  tui.searchBusy = false;
+  hideOverlay();
+  paintOrSplash();
+}
+
+function drawSearch() {
+  const overlay = renderSearchOverlay(getWidth());
+  tui.lastContent = overlay;
+  process.stdout.write('\x1b[2J\x1b[H' + overlay);
+}
+
+/**
+ * Ask the runtime for matches.
+ *
+ * Debounced: a lookup per keystroke would put four requests in flight for
+ * "INFY" and let an older one land last.
+ */
+function queueSearch() {
+  if (_searchTimer) clearTimeout(_searchTimer);
+  tui.searchBusy = Boolean(tui.searchQuery);
+  drawSearch();
+  if (!tui.searchQuery) return;
+  _searchTimer = setTimeout(() => {
+    _searchTimer = null;
+    submitQuery(`/wsearch ${tui.searchQuery}`).catch(() => {});
+  }, 160);
+}
+
 function openModelPicker() {
   tui.modelCurrent = currentModel();
   tui.modelList = listModels();
@@ -588,6 +657,29 @@ export function handleKeypress(ch, key) {
     return;
   }
 
+  if (tui.searchMode) {
+    if (key.name === 'escape') {
+      closeSearch();
+      submitQuery('/wpick cancel').catch(() => {});
+      return;
+    }
+    if (key.name === 'up')   { tui.searchIdx = Math.max(0, tui.searchIdx - 1); return drawSearch(); }
+    if (key.name === 'down') { tui.searchIdx = Math.min(tui.searchResults.length - 1, tui.searchIdx + 1); return drawSearch(); }
+    if (key.name === 'return') {
+      if (!tui.searchResults.length) return;
+      const chosen = tui.searchIdx;
+      closeSearch();
+      submitQuery(`/wpick ${chosen + 1}`).catch(() => {});
+      return;
+    }
+    if (key.name === 'backspace') { tui.searchQuery = tui.searchQuery.slice(0, -1); return queueSearch(); }
+    if (typeof ch === 'string' && ch.length === 1 && !key.ctrl && !key.meta) {
+      tui.searchQuery += ch;
+      return queueSearch();
+    }
+    return;
+  }
+
   if (tui.askMode) {
     if (key.name === 'escape') {
       submitQuery('/pick cancel').catch(() => {});
@@ -664,6 +756,13 @@ export function handleKeypress(ch, key) {
   if (key.ctrl && key.name === 'u') return clearPrompt();
 
   // ── Command line ──────────────────────────────────────────────────
+  // Left and right move between tabs while a world is open and the line is
+  // empty. They do nothing else here — the field has no cursor to move — so
+  // this costs the prompt nothing.
+  if ((key.name === 'left' || key.name === 'right') && tui.scope?.ticker && !tui.queryInput) {
+    submitQuery(`/tab ${key.name === 'right' ? 'next' : 'prev'}`).catch(() => {});
+    return;
+  }
   if (key.name === 'return') return void sendQueryInput();
   if (key.name === 'up')     return recallHistory(1);
   if (key.name === 'down')   return recallHistory(-1);

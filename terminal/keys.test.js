@@ -38,6 +38,7 @@ beforeEach(() => {
   tui.agentState = null;
   tui.inputMode = tui.askMode = tui.modelMode = tui.loadMode = tui.helpVisible = false;
   tui.lastContent = 'x';
+  tui.scope = null;
   tui.panelIds = [];
 });
 
@@ -147,5 +148,35 @@ describe('modal overlays keep priority over the prompt', () => {
     type('abc');
     expect(tui.inputValue).toBe('abc');
     expect(tui.queryInput).toBe('');
+  });
+});
+
+describe('arrow keys move between tabs inside a world', () => {
+  it('steps forward and back when the line is empty', () => {
+    tui.scope = { ticker: 'RELIANCE', detail: 'NSE:RELIANCE · OVERVIEW' };
+    handleKeypress(null, { name: 'right' });
+    expect(submitQuery).toHaveBeenCalledWith('/tab next');
+    handleKeypress(null, { name: 'left' });
+    expect(submitQuery).toHaveBeenCalledWith('/tab prev');
+  });
+
+  it('leaves history alone — up and down still recall questions', () => {
+    tui.scope = { ticker: 'RELIANCE', detail: 'NSE:RELIANCE' };
+    tui.queryHistory = ['first'];
+    handleKeypress(null, { name: 'up' });
+    expect(tui.queryInput).toBe('first');
+  });
+
+  it('does nothing outside a world', () => {
+    tui.scope = null;
+    handleKeypress(null, { name: 'right' });
+    expect(submitQuery).not.toHaveBeenCalled();
+  });
+
+  it('never steals an arrow from a half-typed question', () => {
+    tui.scope = { ticker: 'RELIANCE', detail: 'NSE:RELIANCE' };
+    tui.queryInput = 'why did';
+    handleKeypress(null, { name: 'right' });
+    expect(submitQuery).not.toHaveBeenCalled();
   });
 });

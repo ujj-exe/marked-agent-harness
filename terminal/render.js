@@ -8,6 +8,7 @@
 import { CAPABILITIES, DESK, LIVE } from '../runtime/commands.js';
 import { BRAND, BOLD, DIM, RESET, LIME_D, LIME_M, LABEL, REPORTS_DIR, tui } from './state.js';
 import { visLen, ansiTrunc, fg, palette } from '../src/index.js';
+import { shortDate } from '../data/normalization.js';
 import { renderBlocks, presetToBlocks } from './engine.js';
 import { estimateCost } from './cost.js';
 import { SPINNER_FRAMES } from './splash.js';
@@ -80,6 +81,22 @@ export function renderHelpOverlay(width) {
     K('Ctrl+U', 'Clear the line'),
     K('Ctrl+D', 'Quit (empty line only)'),
     '',
+    `  ${BRAND}${BOLD}COMPANY WORLD${RESET}  ${DIM}a company as a workspace${RESET}`,
+    K('/world <company>', 'Open a world — name, ticker, ISIN or CIN'),
+    K('overview … evidence', 'Switch tab — including NEWS, ← → to step'),
+    K('/chart <measure>', 'revenue · pat · roe · roce · net_debt · margins · price'),
+    K('/chart revenue 5y yoy', 'Add a range (1M…MAX) and a view (yoy, indexed, cagr)'),
+    K('<any question>', 'Answered about the open company — no need to name it'),
+    K('← / →', 'Previous / next tab'),
+    K('E12  or  /e 12', 'Open the source behind a number'),
+    K('evidence', 'Every fact this world retrieved, with references'),
+    K('/world', 'Search — recent companies first, then type to find any'),
+    K('/market', 'Rates, the rupee, and the commodity complex'),
+    K('/news rates', 'Market news by topic or region — works anywhere'),
+    K('/news', 'In a world: that company. Outside: the whole feed'),
+    K('/compare A B C', 'Two to five companies, side by side, same arithmetic'),
+    K('/exit', 'Leave the world'),
+    '',
     `  ${BRAND}${BOLD}FAST PATH${RESET}  ${DIM}data only — no reasoning model, no spend${RESET}`,
     K('RELIANCE', 'A company, straight to its panels'),
     K('FA <company>', 'Financial profile'),
@@ -140,7 +157,11 @@ export function renderQueryOverlay(width, value = '') {
   const displayValue = /^\/marked\s+\S+$/.test(value)
     ? value.replace(/^(\/marked\s+)\S+$/, (_match, prefix) => `${prefix}${'•'.repeat(value.length - prefix.length)}`)
     : value;
-  const field = `${LABEL} query ${RESET}${BRAND}›${RESET} ${highlightCommand(displayValue)}${BRAND}█${RESET}`;
+  // Inside a world the prompt carries the company, so the scope is never a
+  // thing you have to remember — `INFY ›` says what the next question is about.
+  const ticker = tui.scope?.ticker;
+  const label = ticker ? ` ${ticker} ` : ' query ';
+  const field = `${LABEL}${label}${RESET}${BRAND}›${RESET} ${highlightCommand(displayValue)}${BRAND}█${RESET}`;
   return ansiTrunc(field, Math.max(1, width - 1));
 }
 
@@ -152,31 +173,113 @@ export function renderQueryOverlay(width, value = '') {
  * while one is still running. The right-hand hint is the only part that
  * changes with state, so the field never moves under the cursor.
  */
-export function renderPromptRow(width, value = '') {
+/** Rows the command line occupies: a rule, the field, and a hint line. */
+export const PROMPT_ROWS = 3;
+
+/**
+ * The command line, as three rows.
+ *
+ * Giving the field a rule above it and its hints below — rather than crowding
+ * both onto one line — is what makes it read as a place to type rather than
+ * another status row. The context on the right of the rule says which company
+ * the next question will be about, which is the thing you most want to know
+ * before asking one.
+ *
+ * @returns {string[]} exactly `PROMPT_ROWS` lines
+ */
+export function renderPromptBlock(width, value = '', context = undefined) {
   const s = tui.agentState;
   const running = s && (s.stage === 'gathering' || s.stage === 'analyzing' || s.stage === 'resolving');
-  const hint = running
-    ? `${DIM}^C cancel${RESET}`
+
+  // Rule, with the active scope right-aligned on it.
+  // One source for the scope: the ticker on the field and the detail on the
+  // rule must never disagree about which company you are in.
+  const scopeSource = context === undefined ? tui.scope : context;
+  const detail = typeof scopeSource === 'string' ? scopeSource : scopeSource?.detail;
+  const scope = detail ? `${DIM} ${detail} ${RESET}` : '';
+  const ruleWidth = Math.max(0, width - visLen(scope));
+  const rule = `${DIM}${'─'.repeat(ruleWidth)}${RESET}${scope}`;
+
+  const field = renderQueryOverlay(Math.max(1, width - 1), value);
+
+  const hints = running
+    ? [`${BRAND}▸▸${RESET} ${DIM}working${RESET}`, '^C cancel', 'PgUp/Dn scroll']
     : value
-      ? `${DIM}⏎ ask  ^C clear${RESET}`
-      : `${DIM}/help  ^D quit${RESET}`;
-  const field = renderQueryOverlay(Math.max(1, width - visLen(hint) - 3), value);
-  const gap = Math.max(1, width - visLen(field) - visLen(hint) - 1);
-  return field + ' '.repeat(gap) + hint;
+      ? [`${BRAND}▸▸${RESET} ${DIM}⏎ to ask${RESET}`, '^C clear', '^G help']
+      : [`${BRAND}▸▸${RESET} ${DIM}type to ask${RESET}`, '/help', '^S save', '^O load', '^D quit'];
+  const hint = hints[0] + `${DIM}` + hints.slice(1).map(part => `  ${part}`).join('') + `${RESET}`;
+
+  return [rule, field, ansiTrunc(hint, width)];
+}
+
+/** Kept for callers that want the field alone. */
+export function renderPromptRow(width, value = '') {
+  return renderQueryOverlay(Math.max(1, width - 1), value);
 }
 
 // ── Layout dispatcher ───────────────────────────────────────────────────────
 
-export function runLayout(layoutOrBlocks, panels, width, focused) {
+export function runLayout(layoutOrBlocks, panels, width, focused, rows = null) {
   try {
-    if (Array.isArray(layoutOrBlocks)) {
-      return renderBlocks(layoutOrBlocks, width);
-    }
-    const blocks = presetToBlocks(layoutOrBlocks, panels ?? {});
-    return renderBlocks(blocks, width);
+    const blocks = Array.isArray(layoutOrBlocks)
+      ? layoutOrBlocks
+      : presetToBlocks(layoutOrBlocks, panels ?? {});
+    return fillHeight(blocks, width, rows);
   } catch (err) {
     return `${DIM}⚠ Render error: ${err.message}${RESET}`;
   }
+}
+
+/** Chrome around the body: header, footer, scroll indicator, command line. */
+const CHROME_ROWS = 2 + PROMPT_ROWS;
+
+/**
+ * Render, measure, and give the leftover rows to whatever asked for them.
+ *
+ * A block builder cannot know how tall its own output will be — that depends
+ * on the data, the width and every other block — so guessing a share of the
+ * screen left a tall terminal two-thirds empty whenever a company reported few
+ * events. Instead the first pass measures, and a block marked `grow` is
+ * re-rendered once with the slack added to its height. Two passes, exact, and
+ * the builder keeps no arithmetic about screen size at all.
+ */
+export function fillHeight(blocks, width, rows) {
+  const once = renderBlocks(blocks, width);
+  if (!rows || !Array.isArray(blocks)) return once;
+
+  const growable = findGrowable(blocks);
+  if (!growable) return once;
+
+  const available = rows - CHROME_ROWS;
+  const used = once.split('\n').length;
+  const slack = available - used;
+  // One row of slack is not worth a second pass, and negative slack means the
+  // view already scrolls — growing it would only add more to scroll past.
+  if (slack < 2) return once;
+
+  const current = Number(growable.data?.height) || 0;
+  const grown = blocks.map(block => substitute(block, growable, current + slack));
+  return renderBlocks(grown, width);
+}
+
+/** The first block marked `grow`, wherever it sits in the tree. */
+function findGrowable(blocks) {
+  for (const block of blocks) {
+    if (block?.grow && block.data) return block;
+    const children = block?.row ?? block?.stack;
+    if (Array.isArray(children)) {
+      const found = findGrowable(children);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function substitute(block, target, height) {
+  if (block === target) return { ...block, data: { ...block.data, height } };
+  if (Array.isArray(block?.row)) return { ...block, row: block.row.map(child => substitute(child, target, height)) };
+  if (Array.isArray(block?.stack)) return { ...block, stack: block.stack.map(child => substitute(child, target, height)) };
+  return block;
 }
 
 // ── Footer ──────────────────────────────────────────────────────────────────
@@ -222,7 +325,7 @@ export function buildFooter(width) {
       if (progress.etaSeconds != null) parts.push(`${DIM}~${progress.etaSeconds}s left${RESET}`);
     }
     const left = parts.join(` ${DIM}·${RESET} `);
-    const keys = `${DIM}^C cancel  PgUp/Dn scroll${RESET}`;
+    const keys = '';   // the command line's hint row carries ^C while running
     return fitSides(left, keys, width);
   }
 
@@ -246,18 +349,16 @@ export function buildFooter(width) {
     modelLabel ? `${DIM}${modelLabel}${RESET}` : null,
     toolsLabel ? `${DIM}${toolsLabel}${RESET}` : null,
     costStr,
-    m.as_of ? `${DIM}${m.as_of}${RESET}` : null,
+    m.as_of ? `${DIM}${shortDate(m.as_of)} IST${RESET}` : null,
   ].filter(Boolean).join(sep);
 
   const left = `  ${gradMark} ${meshLabel}` + (meta ? `${sep}${meta}` : '');
 
-  // Show follow-ups hint when complete
-  let keys;
-  if (s?.stage === 'complete' && s?.follow_ups?.length > 0) {
-    keys = `${DIM}/1-/${s.follow_ups.length} drill  PgUp/Dn scroll  ^S save  ^G help${RESET}`;
-  } else {
-    keys = `${DIM}PgUp/Dn scroll  ^S save  ^O load  ^G help  ^D quit${RESET}`;
-  }
+  // Keys live on the command line's hint row now. Repeating them here put the
+  // same five shortcuts on screen twice; the footer keeps what only it knows.
+  const keys = s?.stage === 'complete' && s?.follow_ups?.length > 0
+    ? `${DIM}/1-/${s.follow_ups.length} to drill${RESET}`
+    : '';
 
   return fitSides(left, keys, width);
 }
@@ -396,9 +497,9 @@ let _animTimer = null;
  * @param {number} rows terminal height
  */
 export function footerRow(totalLines, rows) {
-  const rowsForContent = rows - 1;                 // the prompt takes one
+  const rowsForContent = rows - PROMPT_ROWS;
   if (totalLines <= rowsForContent) return totalLines;
-  return rows - 2;                                 // …footer, indicator, prompt
+  return rows - PROMPT_ROWS - 1;                   // …footer, indicator, then the prompt block
 }
 
 export function startRenderAnimation() {
@@ -491,23 +592,26 @@ export function paintWithScroll(clear = true) {
   allLines[0] = buildHeader(w);
   displayContent = allLines.join('\n');
 
-  // The prompt owns the last row in every path, so reserve it before deciding
-  // whether the content fits.
-  const promptRow = renderPromptRow(w, tui.queryInput ?? '');
-  const rowsForContent = rows - 1;
+  // The command line owns the last three rows in every path, so reserve them
+  // before deciding whether the content fits.
+  const promptBlock = renderPromptBlock(w, tui.queryInput ?? '', tui.scope ?? null);
+  const paintPrompt = () => promptBlock
+    .map((line, index) => `\x1b[${rows - PROMPT_ROWS + 1 + index};1H\x1b[2K${line}`)
+    .join('');
+  const rowsForContent = rows - PROMPT_ROWS;
 
   if (totalLines <= rowsForContent) {
     if (clear) {
-      process.stdout.write('\x1b[2J\x1b[H' + displayContent + `\x1b[${rows};1H\x1b[2K` + promptRow);
+      process.stdout.write('\x1b[2J\x1b[H' + displayContent + paintPrompt());
     } else {
       // Overwrite in place — pad each line to full width to cover old content
       const padded = allLines.map(l => l + ' '.repeat(Math.max(0, w - visLen(l)))).join('\n');
       process.stdout.write('\x1b[H' + padded);
-      // Clear any leftover rows below, stopping short of the prompt row.
-      for (let r = totalLines + 1; r < rows; r++) {
+      // Clear any leftover rows below, stopping short of the prompt block.
+      for (let r = totalLines + 1; r <= rows - PROMPT_ROWS; r++) {
         process.stdout.write(`\x1b[${r};1H\x1b[2K`);
       }
-      process.stdout.write(`\x1b[${rows};1H\x1b[2K` + promptRow);
+      process.stdout.write(paintPrompt());
     }
     return;
   }
@@ -516,7 +620,7 @@ export function paintWithScroll(clear = true) {
   const stickyLine = allLines[0];
   const bodyLines  = allLines.slice(1, allLines.length - 1);
   const footerLine = allLines[allLines.length - 1];
-  const bodyRows   = rows - 4; // sticky(1) + footer(1) + indicator(1) + prompt(1)
+  const bodyRows   = rows - 3 - PROMPT_ROWS; // sticky + footer + indicator + the prompt block
 
   const maxOffset = Math.max(0, bodyLines.length - bodyRows);
   tui.scrollOffset = Math.max(0, Math.min(tui.scrollOffset, maxOffset));
@@ -531,13 +635,13 @@ export function paintWithScroll(clear = true) {
     `${offset + 1}–${Math.min(offset + viewLines.length, bodyLines.length)}/${bodyLines.length}` +
     (atBottom ? '' : ' ▼') +
     ` ${atBottom ? 'END' : pct + '%'}` +
-    `  ↑↓/jk scroll  PgUp/Dn  g top  G end${RESET}`;
+    `  PgUp/Dn page  ^↑/^↓ line  Home/End ends${RESET}`;
 
   // Truncate sticky header to prevent wrap
   const safeHeader = visLen(stickyLine) > w ? ansiTrunc(stickyLine, w) : stickyLine;
 
   // Render with explicit cursor addressing per row — no wrap issues
-  const allOutput = [safeHeader, ...viewLines, footerLine, indicator, promptRow];
+  const allOutput = [safeHeader, ...viewLines, footerLine, indicator, ...promptBlock];
   let buf = clear ? '\x1b[2J' : '';
   for (let r = 0; r < allOutput.length; r++) {
     const line = allOutput[r];
@@ -551,4 +655,54 @@ export function paintWithScroll(clear = true) {
   }
   buf += `\x1b[${rows};1H`; // park cursor at bottom
   process.stdout.write(buf);
+}
+
+/**
+ * World search.
+ *
+ * Results arrive from the runtime as the user types — the terminal holds no
+ * API key, so every keystroke's lookup is a round trip. The list is drawn even
+ * while a newer query is in flight, because a list that blanks between
+ * keystrokes reads as broken.
+ */
+export function renderSearchOverlay(width) {
+  const lines = [
+    '',
+    `  ${LIME_D}▐${LIME_M}█${BRAND}█${RESET} ${BRAND}${BOLD}MARKED${RESET}  ${LABEL}WORLD SEARCH${RESET}`,
+    `${DIM}${'─'.repeat(width)}${RESET}`,
+    '',
+    `  ${LABEL} find ${RESET}${BRAND}›${RESET} ${tui.searchQuery || ''}${BRAND}█${RESET}`,
+    `  ${DIM}name · ticker · ISIN · CIN${tui.searchBusy ? ' · searching…' : ''}${RESET}`,
+    `  ${DIM}↑↓ navigate · Enter open · Esc cancel${RESET}`,
+    '',
+  ];
+
+  if (!tui.searchQuery) {
+    if (tui.searchResults.length) {
+      lines.push(`  ${DIM}RECENT${RESET}`);
+      tui.searchResults.forEach((hit, index) => {
+        const active = index === tui.searchIdx;
+        const cursor = active ? `${BRAND}▶${RESET}` : ' ';
+        const name = ansiTrunc(hit.name ?? '', Math.max(20, Math.floor(width * 0.45)));
+        const detail = [hit.symbol, hit.tab].filter(Boolean).join(' · ');
+        lines.push(`  ${cursor} ${active ? `${BOLD}${LABEL}${name}${RESET}` : name}   ${DIM}${detail}${RESET}`);
+      });
+      return lines.join('\n');
+    }
+    lines.push(`  ${DIM}Type to search every listed company Marked covers.${RESET}`);
+    return lines.join('\n');
+  }
+  if (!tui.searchResults.length) {
+    lines.push(`  ${DIM}${tui.searchBusy ? 'Searching…' : `Nothing matches “${tui.searchQuery}”`}${RESET}`);
+    return lines.join('\n');
+  }
+
+  tui.searchResults.forEach((hit, index) => {
+    const active = index === tui.searchIdx;
+    const cursor = active ? `${BRAND}▶${RESET}` : ' ';
+    const name = ansiTrunc(hit.name ?? '', Math.max(20, Math.floor(width * 0.45)));
+    const detail = [hit.symbol, hit.exchange, hit.isin].filter(Boolean).join(' · ');
+    lines.push(`  ${cursor} ${active ? `${BOLD}${LABEL}${name}${RESET}` : name}   ${DIM}${detail}${RESET}`);
+  });
+  return lines.join('\n');
 }

@@ -63,7 +63,10 @@ export async function healthCheck() {
   let markedUp = false;
   try {
     const response = await fetch('https://api.marked.run/v1/');
-    markedUp = response.status !== 401 && response.status < 500;
+    // A 401 is the API answering — it is up, we simply did not present a key
+    // on this probe. Reading it as down told the user Marked was unreachable
+    // while it was serving every request the runtime made.
+    markedUp = response.status < 500;
   } catch { markedUp = false; }
 
   if (connectedAgent()) return;
