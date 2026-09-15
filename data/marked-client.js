@@ -79,11 +79,48 @@ export class MarkedClient {
     return this.prices({ ticker: symbol, exchange, latest: true }, options);
   }
   financials(params = {}, options) { return this.request('/v1/financials', { params, ...options }); }
+
+  /**
+   * Balance-sheet facts.
+   *
+   * These are instants — a value at a date, with no period start — so the
+   * `period=annual|quarterly` filters exclude them entirely and the API counts
+   * them under `meta.unclassified_facts`. Asking for `period=any` is the only
+   * way to see them, which is why equity, borrowings and cash appeared to be
+   * missing from the dataset when they were there all along.
+   */
+  balanceSheet(params = {}, options) {
+    return this.request('/v1/financials', { params: { ...params, period: 'any' }, ...options });
+  }
   metrics(params = {}, options) { return this.request('/v1/financial-metrics', { params, ...options }); }
   shareholding(params = {}, options) { return this.request('/v1/shareholding', { params, ...options }); }
   filings(params = {}, options) { return this.request('/v1/filings', { params, ...options }); }
   corporateActions(params = {}, options) { return this.request('/v1/corporate-actions', { params, ...options }); }
   events(params = {}, options) { return this.request('/v1/events', { params, ...options }); }
+  /**
+   * Every version of one number ever published — the restatement trail.
+   *
+   * Note the prefix: this router mounts at `/api/v1`, not `/v1` like the rest
+   * of the public surface. Calling it at `/v1` returns 404, which reads
+   * exactly like a route that was never deployed.
+   */
+  provenance({ reference, concept, periodEnd, basis = 'consolidated' } = {}, options) {
+    if (!reference || !concept || !periodEnd) throw new Error('provenance needs a company, a concept and a period end');
+    return this.request(
+      `/api/v1/companies/${encodeURIComponent(reference)}/financials/${encodeURIComponent(concept)}/provenance`,
+      { params: { period_end: periodEnd, basis }, ...options },
+    );
+  }
+
+  /** Market news, already resolved to the companies it names. */
+  news(params = {}, options) { return this.request('/v1/news', { params, ...options }); }
+
+  /** The topics, regions, tiers and publishers news is tagged with. */
+  newsVocabulary(options) { return this.request('/v1/news/vocabulary', { ...options }); }
+
+  /** FX, commodities and macro in one call, each carrying its own evidence. */
+  marketContext(options) { return this.request('/v1/market/context', { ...options }); }
+
   search(body, options) { return this.request('/v1/search', { method: 'POST', body, ...options }); }
   screen(body, options) { return this.request('/v1/screen', { method: 'POST', body, ...options }); }
   screenVocabulary(options) { return this.request('/v1/screen/vocabulary', { ...options }); }
