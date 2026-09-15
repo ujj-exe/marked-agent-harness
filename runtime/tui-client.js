@@ -125,6 +125,29 @@ export class TuiClient {
     catch { return { cancelled: true }; }
   }
 
+  /**
+   * The terminal's current size, straight from the TUI.
+   *
+   * Block builders receive a width but never a height, so a short view left
+   * two-thirds of a tall window empty. A world asks for this once when it
+   * opens and sizes its chart and tables to fill the screen it actually has.
+   *
+   * @returns {Promise<{width: number, height: number}>} falls back to 80x24
+   */
+  async dimensions() {
+    const fallback = { width: 80, height: 24 };
+    if (!this.port) return fallback;
+    try {
+      const state = await (await this.fetch(`http://127.0.0.1:${this.port}/health`)).json();
+      return {
+        width: Number(state.width) || fallback.width,
+        height: Number(state.height) || fallback.height,
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
   async post(route, payload) {
     const response = await this.fetch(`http://127.0.0.1:${this.port}${route}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
