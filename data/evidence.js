@@ -113,6 +113,10 @@ export function toFinancialFact(row, { companyId = null, companyName = null, tic
       source_label: row?.source_label ?? null,
       document_id: row?.document_id ?? null,
       known_at: row?.known_at ?? row?.published_at ?? null,
+      // When the filing appeared, kept apart from when the number became
+      // knowable. The evidence drawer shows both, and they are not the same
+      // question.
+      published_at: row?.published_at ?? null,
       retrieved_at: row?.retrieved_at ?? new Date().toISOString(),
     },
   };
@@ -137,6 +141,10 @@ export function financialFactEvidence(facts) {
     });
     evidence.value = fact.value;
     evidence.period = fact.period;
+    // The display period is `FY2026`; the restatement trail is addressed by the
+    // actual closing date, so both have to survive.
+    evidence.period_end = fact.period_end ?? null;
+    evidence.concept_id = fact.concept_id ?? null;
     evidence.unit = fact.unit;
     evidence.currency = fact.currency;
     evidence.fiscal_year = fact.fiscal_year;
