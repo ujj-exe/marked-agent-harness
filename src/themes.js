@@ -80,9 +80,24 @@ const themes = {
     chartHigh: '#C0FF00',
     chartLow:  '#374EFF',
   },
+  // Muted violet on purple-black. Market green/red are kept close to the
+  // house values so direction never reads as decoration, and chartLow is a
+  // deep violet so gradients stay in-family instead of falling back to grey.
+  'marked-violet': {
+    accent:    '#A189E8',
+    positive:  '#72C66B',
+    negative:  '#E7775A',
+    warning:   '#E8B44A',
+    data:      '#E8E4F2',
+    label:     '#7C6BB0',
+    muted:     '#5A5270',
+    highlight: '#C9B6FF',
+    chartHigh: '#A189E8',
+    chartLow:  '#3A2E5C',
+  },
 };
 
-let activeTheme = 'marked';
+let activeTheme = 'marked-violet';
 
 export function setTheme(name) {
   if (themes[name]) activeTheme = name;

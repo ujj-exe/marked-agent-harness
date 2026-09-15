@@ -5,10 +5,13 @@ import { agentModel, loadConfig, requireApiKey, saveAgent, saveApiKey } from './
 import { MarkedClient } from '../data/marked-client.js';
 import { createAgentProvider } from './providers.js';
 import { modelLabel } from '../config/models.js';
-import { MarkedOrchestrator } from './orchestrator.js';
+import { CancelledError, MarkedOrchestrator } from './orchestrator.js';
+import { parseMnemonic } from './mnemonics.js';
 import { TuiClient } from './tui-client.js';
 import { appendConversationTurn, createConversation, formatConversationHistory, loadConversation, saveConversation } from './session.js';
-import { DESK, parseDeskCommand, parseModelCommand } from './commands.js';
+import { CAPABILITIES, DESK, LIVE, parseCapabilityCommand, parseDeskCommand, parseLiveCommand, parseModelCommand } from './commands.js';
+import { runCapability } from './capabilities.js';
+import { fetchLiveTape, liveTapeBlock } from './live-tape.js';
 import { applyAnswer, companyClarification, nextClarification } from './clarify.js';
 import { resolvePlan } from './plan.js';
 import { runOnboarding } from './onboarding.js';
@@ -37,12 +40,16 @@ ${row('--help, -h', 'Show this help')}
 The team. Type these as a query, in the terminal or on the command line
 ${DESK.map(([name, arg, desc]) => row(`${name}${arg ? ` ${arg}` : ''}`, desc)).join('\n')}
 
+Power workflows
+${CAPABILITIES.map(([name, arg, desc]) => row(`${name} ${arg}`, desc)).join('\n')}
+
 Terminal commands
 ${row('/marked <key>', 'Save a Marked API key without re-running setup')}
 ${row('/model', 'Pick the reasoning runtime and model')}
 ${row('/model claude opus', 'Set runtime and model directly, no picker')}
 ${row('/new', 'Start a fresh conversation')}
 ${row('/history', 'Show recent conversation turns')}
+${row('/live [symbols]', 'Poll live API quotes in a compact tape; /live off disables it')}
 
 Keys
 ${row('n', 'Ask a question')}
@@ -85,7 +92,30 @@ async function askClarification(clarification, question) {
 }
 
 let stopped = false;
-const stop = async () => { if (stopped) return; stopped = true; agent?.cancel(); await tui?.stop(); };
+let liveTimer = null;
+let liveSymbols = [];
+let liveRefresh = null;
+const stopLive = () => { if (liveTimer) clearInterval(liveTimer); liveTimer = null; liveSymbols = []; };
+const refreshLive = async () => {
+  if (!data || !liveSymbols.length || liveRefresh) return;
+  liveRefresh = fetchLiveTape(data, liveSymbols)
+    .then(rows => tui.render({ patch: true, blocks: [liveTapeBlock(rows)], liveTape: rows }))
+    .catch(() => {})
+    .finally(() => { liveRefresh = null; });
+  await liveRefresh;
+};
+const startLive = async symbols => {
+  stopLive();
+  liveSymbols = symbols;
+  if (!liveSymbols.length) {
+    await tui.render({ patch: true, liveTape: [], blocks: [{ text: 'Live tape disabled', id: 'live-tape' }] });
+    return;
+  }
+  await refreshLive();
+  liveTimer = setInterval(refreshLive, 15_000);
+  liveTimer.unref?.();
+};
+const stop = async () => { if (stopped) return; stopped = true; stopLive(); agent?.cancel(); await tui?.stop(); };
 process.on('SIGINT', () => stop().finally(() => process.exit(130)));
 process.on('SIGTERM', () => stop().finally(() => process.exit(143)));
 
@@ -99,6 +129,9 @@ try {
     await tui.setModel(modelLabel(setup.agent, setup.model));
   }
   agent = createAgentProvider(startAgent, { model: agentModel(config, startAgent) });
+  // `orchestrator` is rebuilt when the key or model changes, so resolve it at
+  // call time rather than capturing whichever instance existed at startup.
+  tui.onCancel = () => { orchestrator?.abort(); agent?.cancel?.(); };
   let question = initialQuestion;
   while (true) {
     question = question || await tui.waitForQuery();
@@ -156,6 +189,18 @@ try {
     }
 
     const deskCommand = parseDeskCommand(question);
+    const capability = parseCapabilityCommand(question);
+    const live = parseLiveCommand(question);
+    if (capability?.error) {
+      await tui.notice(capability.error);
+      question = '';
+      continue;
+    }
+    if (live?.error) {
+      await tui.notice(live.error);
+      question = '';
+      continue;
+    }
     if (deskCommand?.error) {
       await tui.notice(deskCommand.error);
       question = '';
@@ -166,7 +211,7 @@ try {
     // as an unknown command turns a double keypress into a dead query.
     if (/^\/pick\b/i.test(question)) { question = ''; continue; }
 
-    if (!deskCommand && question.startsWith('/')) {
+    if (!deskCommand && !capability && !live && question.startsWith('/')) {
       await tui.notice('Unknown command · press ? for help');
       question = '';
       continue;
@@ -185,6 +230,57 @@ try {
       }
     }
 
+    if (live) {
+      await startLive(live.symbols);
+      question = '';
+      continue;
+    }
+
+    if (capability) {
+      try {
+        const session = await runCapability(capability, { orchestrator, tui, agentName: agent.name, asOf, conversation });
+        conversation = appendConversationTurn(conversation, session);
+        saveConversation(conversation);
+      } catch (error) {
+        if (error instanceof CancelledError || error?.cancelled || /\bcancelled\b/i.test(String(error?.message ?? ''))) {
+          await tui.notice('Cancelled');
+        } else {
+          await tui.notice(`Workflow failed · ${String(error.message || error).slice(0, 180)}`);
+        }
+      }
+      question = '';
+      continue;
+    }
+
+    // The fast half of the command line. `RELIANCE` and `FA INFY` are requests
+    // for state, not questions about it, so they take the planner's place
+    // entirely: resolve the name, retrieve, render, done — no plan review, no
+    // reasoning provider, nothing spent. Anything else returns null here and
+    // takes the full route below, unchanged.
+    const mnemonic = parseMnemonic(question);
+    let mnemonicAnswered = false;
+    if (mnemonic) {
+      try {
+        const session = await orchestrator.run(mnemonic.reference, {
+          agentName: agent.name, asOf, conversation,
+          intentOverride: { kind: 'company', references: [mnemonic.reference] },
+          route: mnemonic.route,
+          dataOnly: true,
+        });
+        conversation = appendConversationTurn(conversation, session);
+        saveConversation(conversation);
+        mnemonicAnswered = true;
+      } catch (error) {
+        if (error instanceof CancelledError || error?.cancelled) {
+          await tui.notice('Cancelled');
+          mnemonicAnswered = true;
+        }
+        // Otherwise the token was probably a word, not a company. Say nothing
+        // and fall through: the full route reads it as the question it was.
+      }
+    }
+    if (mnemonicAnswered) { question = ''; continue; }
+
     // A question the runtime cannot answer well is a question worth asking back.
     // Clarify what the plan leaves open before spending a research run on a
     // reading the user never chose.
@@ -201,6 +297,12 @@ try {
       try {
         session = await orchestrator.run(question, { agentName: agent.name, asOf, conversation, intentOverride: deskCommand?.intent, plan });
       } catch (error) {
+        // An abandoned run is a choice, not a fault: say so plainly and keep
+        // the session, rather than reporting the user's own Ctrl-C as a failure.
+        if (error instanceof CancelledError || error?.cancelled || /\bcancelled\b/i.test(String(error?.message ?? ''))) {
+          await tui.notice('Cancelled');
+          break;
+        }
         const resolved = await askClarification(companyClarification(error), question);
         if (resolved) { question = resolved; plan = undefined; continue; }
         const message = String(error.message || error).replace(/mk_(?:live|test)_[A-Za-z0-9_-]+/g, 'mk_…');

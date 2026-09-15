@@ -5,26 +5,35 @@
  * 4 rows, ~45 chars wide. Monospace-native, asymmetric.
  */
 
-const BRAND = '\x1b[38;2;192;255;0m';    // #C0FF00 lime
-const LIME_D = '\x1b[38;2;100;180;0m';   // dark lime
-const LIME_M = '\x1b[38;2;155;220;0m';   // mid lime
+import { fg, palette, shade } from '../src/index.js';
+
 const BOLD   = '\x1b[1m';
 const DIM    = '\x1b[2m';
 const RESET  = '\x1b[0m';
 
-export const LOGO_B = [
-  `${LIME_D}  ▐${RESET} ${LIME_M}▐▌${RESET} ${BRAND}█${RESET}   ${BRAND}${BOLD}MARKED${RESET}`,
-  `${LIME_D}  █${RESET} ${LIME_M}██${RESET} ${BRAND}█${RESET}   ${BRAND}${BOLD}INDIA${RESET}`,
-  `${LIME_M}  █${RESET} ${BRAND}██${RESET} ${LIME_D}▐${RESET}`,
-  `${BRAND}  ▐${RESET} ${LIME_D}▐▌${RESET} ${LIME_M}▐${RESET}   ${DIM}The view that matters.${RESET}`,
-];
+// The three brand shades are derived from the active accent rather than
+// frozen at import, so `logoBlock()` and `wordmark()` follow a theme change.
+function ramp() {
+  const accent = palette('accent') || '#ffffff';
+  return { BRAND: fg(accent), LIME_M: fg(shade(accent, 0.78)), LIME_D: fg(shade(accent, 0.5)) };
+}
+
+export function logoBlock() {
+  const { BRAND, LIME_M, LIME_D } = ramp();
+  return [
+    `${LIME_D}  ▐${RESET} ${LIME_M}▐▌${RESET} ${BRAND}█${RESET}   ${BRAND}${BOLD}MARKED${RESET}`,
+    `${LIME_D}  █${RESET} ${LIME_M}██${RESET} ${BRAND}█${RESET}   ${BRAND}${BOLD}INDIA${RESET}`,
+    `${LIME_M}  █${RESET} ${BRAND}██${RESET} ${LIME_D}▐${RESET}`,
+    `${BRAND}  ▐${RESET} ${LIME_D}▐▌${RESET} ${LIME_M}▐${RESET}   ${DIM}The view that matters.${RESET}`,
+  ];
+}
 
 /**
  * Render the full brand identity block.
  * @returns {string}
  */
 export function brandBlock() {
-  return LOGO_B.join('\n');
+  return logoBlock().join('\n');
 }
 
 // ── Wordmark ────────────────────────────────────────────────────────────────
@@ -43,7 +52,10 @@ const WORDMARK_ROWS = [
 
 export const WORDMARK_WIDTH = WORDMARK_ROWS[0].length;
 
-/** The wordmark, lime blocks over dimmer bevels. */
-export const WORDMARK = WORDMARK_ROWS.map(row =>
-  row.replace(/\u2588+|[^\u2588 ]+/g, run =>
-    (run[0] === '\u2588' ? BRAND + BOLD : LIME_D) + run + RESET));
+/** The wordmark: accent blocks over dimmer bevels, in the active theme. */
+export function wordmark() {
+  const { BRAND, LIME_D } = ramp();
+  return WORDMARK_ROWS.map(row =>
+    row.replace(/\u2588+|[^\u2588 ]+/g, run =>
+      (run[0] === '\u2588' ? BRAND + BOLD : LIME_D) + run + RESET));
+}

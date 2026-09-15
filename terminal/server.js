@@ -25,6 +25,7 @@ const ANALYTICS_FILE = path.join(ANALYTICS_DIR, 'requests.jsonl');
 const ANALYTICS_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 const VALID_ACTIONS = new Set(['render', 'focus', 'layout', 'clear']);
 import { createRequire } from 'module';
+import { getTheme, themes } from '../src/index.js';
 // __PKG_VERSION__ is replaced by esbuild at bundle time (scripts/build.js define).
 // When running from source (tests), fall back to reading package.json.
 const _require = createRequire(import.meta.url);
@@ -76,15 +77,9 @@ function logAnalytics(entry) {
 // ── Session lock — one Marked runtime per TUI ──────────────────────────────
 let _agentSession = null; // { agent: string, connectedAt: number } or null
 
-// Valid theme names from src/themes.js
-const VALID_THEMES = new Set([
-  'terminal-cyan',
-  'bloomberg',
-  'monochrome',
-  'solarized-dark',
-  'dracula',
-  'marked',
-]);
+// Derived, not copied. A hand-maintained list silently rejects any theme added
+// to src/themes.js, which is exactly how a new theme becomes unreachable.
+const VALID_THEMES = new Set(Object.keys(themes));
 
 // ---------------------------------------------------------------------------
 // EventEmitter singleton
@@ -322,7 +317,7 @@ function handleRequest(req, res) {
       startedAt: _startedAt,
       width: columns ?? 80,
       height: rows ?? 24,
-      theme: 'marked',
+      theme: getTheme(),
       capabilities: ['patch', 'sections', 'focus', 'state', 'memory', 'connect'],
       agent: _agentSession,
     }));
@@ -549,6 +544,7 @@ function handleRequest(req, res) {
           if (filePayload.patch !== undefined) payload.patch = filePayload.patch;
           if (filePayload.layout !== undefined) payload.layout = filePayload.layout;
           if (filePayload.panels !== undefined) payload.panels = filePayload.panels;
+          if (filePayload.liveTape !== undefined) payload.liveTape = filePayload.liveTape;
         }
         // ────────────────────────────────────────────────────────────────────
 

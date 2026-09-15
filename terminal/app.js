@@ -26,15 +26,16 @@
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
+import { pathToFileURL } from 'node:url';
 import { startServer, connectedAgent, emitter } from './server.js';
 import { logStateTransition } from './debugLog.js';
-import { setTheme } from '../src/index.js';
+
 
 // ── Module imports ──────────────────────────────────────────────────────────
 
-import { BRAND, DIM, RESET, REPORTS_DIR, tui, getBlockType, applyPatch } from './state.js';
-import { renderSplash, PULSE_COLORS, SPINNER_FRAMES } from './splash.js';
-import { runLayout, buildFooter, renderLoadOverlay, renderModelOverlay, renderAskOverlay, renderInputOverlay, renderHelpOverlay, renderQueryOverlay, focusIndicator, paintScreen, paintWithScroll, startRenderAnimation, stopRenderAnimation } from './render.js';
+import { BRAND, DIM, RESET, REPORTS_DIR, tui, getBlockType, applyPatch, applyTheme } from './state.js';
+import { renderSplash, SPINNER_FRAMES } from './splash.js';
+import { runLayout, buildFooter, renderLoadOverlay, renderModelOverlay, renderAskOverlay, renderInputOverlay, renderHelpOverlay, renderPromptRow, focusIndicator, paintScreen, paintWithScroll, startRenderAnimation, stopRenderAnimation } from './render.js';
 import { setupMouseWheel, isMouseRecent, isMouseSequenceActive } from './scroll.js';
 import { healthCheck, saveReport, listReports, submitQuery } from './io.js';
 import { currentModel, listModels } from '../config/models.js';
@@ -55,6 +56,10 @@ tui.panels    = {};
 tui.blocks    = null;   // null = use legacy layout+panels
 tui.focused   = null;
 tui.isPatch   = false;
+// The command line is never closed, so this is '' when empty and never null.
+tui.queryInput   = '';
+tui.queryHistory = [];
+tui.historyIdx   = -1;
 
 // ── Repaint helper ───────────────────────────────────────────────────────────
 
@@ -79,18 +84,15 @@ function openAsk(ask) {
   tui.phase = 'live';
   stopSplashAnimation();
   const overlay = renderAskOverlay(getWidth());
-  tui.lastContent = overlay;
-  process.stdout.write('\x1b[2J\x1b[H' + overlay);
+  showOverlay(overlay);
 }
 
 function closeAsk() {
   tui.askMode = false;
   tui.askList = [];
   tui.askStep = null;
-  if (tui.lastBlocks) return paintWithScroll();
-  stopSplashAnimation();
-  tui.phase = 'splash';
-  startSplashAnimation();
+  hideOverlay();
+  paintOrSplash();
 }
 
 function openInput(input) {
@@ -121,6 +123,13 @@ function closeInput() {
 }
 
 function onRender(payload) {
+  if (Array.isArray(payload.liveTape)) {
+    tui.liveTape = payload.liveTape;
+    if (tui.phase === 'splash') {
+      startSplashAnimation();
+      return;
+    }
+  }
   if (tui.phase === 'splash') {
     process.stdout.write('\x1b[2J\x1b[H');
   }
@@ -196,7 +205,7 @@ function onRender(payload) {
   }
 
   if (payload.theme) {
-    setTheme(payload.theme);
+    applyTheme(payload.theme);
   }
 
   repaint();
@@ -225,7 +234,8 @@ function onSplash(payload) {
     tui.phase = 'splash';
     tui.lastContent = '';
     tui.blocks = null;
-    tui.queryInput = null;
+    tui.queryInput = '';
+    tui.liveTape = [];
   }
   tui.splashMsg = payload?.msg ?? '';
   if (payload?.agent) tui.agentState = { ...tui.agentState, ...payload.agent };
@@ -233,45 +243,96 @@ function onSplash(payload) {
   if (tui.phase === 'splash') startSplashAnimation();
 }
 
-function showQueryInput() {
-  if (tui.agentState?.stage === 'gathering' || tui.agentState?.stage === 'analyzing') return;
-  stopSplashAnimation();
-  setMouseReporting(false);
+/**
+ * Repaint only the command line.
+ *
+ * Every keystroke lands here, so it must not repaint the answer above it —
+ * that is what made the old overlay flicker on every character.
+ */
+function drawQueryPrompt() {
+  process.stdout.write(`\x1b[${getHeight()};1H\x1b[2K${renderPromptRow(getWidth(), tui.queryInput)}`);
+}
+
+function clearPrompt() {
   tui.queryInput = '';
-  if (tui.phase === 'splash') {
-    process.stdout.write('\x1b[2J\x1b[H' + renderSplash(tui.splashMsg, getWidth(), 0, getHeight()));
-  }
+  tui.historyIdx = -1;
   drawQueryPrompt();
 }
 
-function cancelQueryInput() {
-  setMouseReporting(true);
-  tui.queryInput = null;
-  process.stdout.write('\x1b[?25l');
-  if (tui.phase === 'splash') startSplashAnimation();
-  else paintWithScroll();
-}
-
-function drawQueryPrompt() {
-  const row = tui.phase === 'splash' ? Math.max(1, getHeight() - 1) : getHeight();
-  process.stdout.write(`\x1b[${row};1H\x1b[2K${renderQueryOverlay(getWidth(), tui.queryInput)}\x1b[?25h`);
+/** Step through past questions, keeping the draft at the bottom of the stack. */
+function recallHistory(delta) {
+  const h = tui.queryHistory;
+  if (!h.length) return;
+  const next = tui.historyIdx + delta;
+  if (next < 0) { tui.historyIdx = -1; tui.queryInput = ''; }
+  else if (next >= h.length) return;
+  else { tui.historyIdx = next; tui.queryInput = h[h.length - 1 - next]; }
+  drawQueryPrompt();
 }
 
 async function sendRuntimeQuery(question) {
-  process.stdout.write('\x1b[?25l');
-  tui.phase = 'splash';
-  tui.lastContent = '';
-  tui.splashMsg = 'Sending query to Marked runtime';
-  startSplashAnimation();
+  // The answer already on screen stays there while the next one is fetched.
+  // Blanking to splash was the old overlay's habit and it threw away the thing
+  // the user was most likely reading from when they typed the follow-up.
+  if (tui.lastContent) {
+    tui.agentState = { ...tui.agentState, stage: 'resolving', query: question };
+    paintWithScroll();
+  } else {
+    tui.phase = 'splash';
+    tui.splashMsg = 'Sending query to Marked runtime';
+    startSplashAnimation();
+  }
   try {
     await submitQuery(question);
   } catch (error) {
-    tui.queryInput = null;
-    tui.splashMsg = `Query unavailable · ${error.message}`;
-    startSplashAnimation();
+    if (tui.lastContent) {
+      tui.agentState = { ...tui.agentState, stage: 'complete' };
+      paintWithScroll();
+    } else {
+      tui.splashMsg = `Query unavailable · ${error.message}`;
+      startSplashAnimation();
+    }
   }
 }
 
+/**
+ * Show a modal overlay without losing the screen underneath.
+ *
+ * The overlay used to be written straight into `tui.lastContent`, which is the
+ * buffer every repaint reads. Closing the overlay then repainted the overlay,
+ * so the model picker could not be escaped — Esc redrew it. The backdrop is
+ * kept here and restored on close.
+ */
+function showOverlay(overlay) {
+  if (tui.overlayBackdrop == null) tui.overlayBackdrop = tui.lastContent;
+  tui.lastContent = overlay;
+  process.stdout.write('\x1b[2J\x1b[H' + overlay);
+}
+
+/** Put back whatever the overlay was covering. */
+function hideOverlay() {
+  if (tui.overlayBackdrop != null) {
+    tui.lastContent = tui.overlayBackdrop;
+    tui.overlayBackdrop = null;
+  }
+}
+
+/** Every modal answers to one key, so there is always a way out. */
+function closeAnyOverlay() {
+  if (tui.modelMode) { closeModelPicker(); return true; }
+  if (tui.loadMode)  { tui.loadMode = false; hideOverlay(); paintOrSplash(); return true; }
+  if (tui.helpVisible) { toggleHelp(); return true; }
+  if (tui.askMode)   { submitQuery('/pick cancel').catch(() => {}); closeAsk(); return true; }
+  if (tui.inputMode) { closeInput(); submitQuery('/input cancel').catch(() => {}); return true; }
+  return false;
+}
+
+function paintOrSplash() {
+  if (tui.lastContent) return paintWithScroll();
+  stopSplashAnimation();
+  tui.phase = 'splash';
+  startSplashAnimation();
+}
 function openModelPicker() {
   tui.modelCurrent = currentModel();
   tui.modelList = listModels();
@@ -280,25 +341,48 @@ function openModelPicker() {
   tui.modelMode = true;
   tui.phase = 'live';
   const overlay = renderModelOverlay(getWidth());
-  tui.lastContent = overlay;
-  process.stdout.write('\x1b[2J\x1b[H' + overlay);
+  showOverlay(overlay);
 }
 
 function closeModelPicker() {
   tui.modelMode = false;
-  if (tui.lastBlocks) return paintWithScroll();
-  stopSplashAnimation();
-  tui.phase = 'splash';
-  startSplashAnimation();
+  hideOverlay();
+  paintOrSplash();
+}
+
+/**
+ * Local commands that never reach the runtime.
+ *
+ * They live in the command line rather than on bare letter keys because every
+ * printable character now belongs to the prompt — a bare `s` is the start of a
+ * question, not a save.
+ */
+function runLocalCommand(text) {
+  const cmd = text.toLowerCase();
+  if (cmd === '/model')  { openModelPicker(); return true; }
+  if (cmd === '/help')   { toggleHelp(); return true; }
+  if (cmd === '/save')   { saveCurrentReport(); return true; }
+  if (cmd === '/load')   { openLoadPicker(); return true; }
+  if (cmd === '/reset')  { resetToSplash(); return true; }
+  if (cmd === '/quit' || cmd === '/exit') { quitApp(); return true; }
+  return false;
+}
+
+/** `/1`..`/9` run the numbered follow-up the action bar is offering. */
+function expandFollowUp(text) {
+  const match = text.match(/^\/([1-9])$/);
+  if (!match) return null;
+  const fu = tui.agentState?.follow_ups?.find(f => f.key === match[1]);
+  return fu?.question ?? null;
 }
 
 async function sendQueryInput() {
-  setMouseReporting(true);
   const question = tui.queryInput.trim();
-  tui.queryInput = null;
-  if (!question) return cancelQueryInput();
-  if (/^\/model$/i.test(question)) { cancelQueryInput(); return openModelPicker(); }
-  await sendRuntimeQuery(question);
+  if (!question) return;
+  tui.queryHistory.push(question);
+  clearPrompt();
+  if (runLocalCommand(question)) return;
+  await sendRuntimeQuery(expandFollowUp(question) ?? question);
 }
 
 function onLive() {
@@ -321,7 +405,7 @@ function startSplashAnimation() {
 
   const width    = getWidth();
   const termRows = getHeight();
-  const allLines = renderSplash(tui.splashMsg, width, 0, termRows).split('\n');
+  const allLines = renderSplash(tui.splashMsg, width, 0, termRows - 1, tui.liveTape).split('\n');
   let revealCount = 0;
   let pulseFrame  = 0;
 
@@ -353,10 +437,12 @@ function startSplashAnimation() {
       // Reveal content lines progressively, but always show spinner at fixed bottom
       process.stdout.write('\x1b[2J\x1b[H' + allLines.slice(0, revealCount).join('\n'));
       process.stdout.write(`\x1b[${spinnerIdx + 1};1H${allLines[spinnerIdx]}`);
+      drawQueryPrompt();
     } else {
       // Content done — show full splash
       revealCount = allLines.length;
       process.stdout.write('\x1b[2J\x1b[H' + allLines.join('\n'));
+      drawQueryPrompt();
     }
     if (revealCount >= allLines.length) {
       clearInterval(_splashRevealTimer);
@@ -369,11 +455,12 @@ function startSplashAnimation() {
         pulseFrame++;
         const currentWidth = getWidth();
         const currentRows  = getHeight();
-        const newLines = renderSplash(tui.splashMsg, currentWidth, pulseFrame, currentRows).split('\n');
+        const newLines = renderSplash(tui.splashMsg, currentWidth, pulseFrame, currentRows - 1, tui.liveTape).split('\n');
         for (const i of animLineIndices) {
-          if (i >= currentRows) continue;
+          if (i >= currentRows - 1) continue;
           process.stdout.write(`\x1b[${i + 1};1H\x1b[2K${newLines[i] ?? ''}`);
         }
+        drawQueryPrompt();
       }, 110);
     }
   }, 16);
@@ -381,19 +468,107 @@ function startSplashAnimation() {
 
 // ── Keyboard input ────────────────────────────────────────────────────────────
 
-function handleKeypress(ch, key) {
-  // Safety: ignore if no key object (can happen with raw data)
+// ── Actions ───────────────────────────────────────────────────────────────────
+// Extracted from the key dispatch: each is now reachable from a slash command
+// as well as a control key, because bare letters belong to the prompt.
+
+function toggleHelp() {
+  tui.helpVisible = !tui.helpVisible;
+  if (tui.helpVisible) {
+    stopSplashAnimation();
+    process.stdout.write('\x1b[2J\x1b[H' + renderHelpOverlay(getWidth()));
+    drawQueryPrompt();
+  } else if (tui.phase === 'splash') {
+    startSplashAnimation();
+  } else {
+    paintWithScroll();
+  }
+}
+
+function saveCurrentReport() {
+  const filename = saveReport();
+  if (!filename) return;
+  const w = getWidth();
+  const savedFooter = buildFooter(w);
+  const confirmFooter = `  ${BRAND}✓${RESET} ${DIM}Saved: ${filename}${RESET}`;
+  tui.lastContent = tui.lastContent.replace(savedFooter, confirmFooter);
+  paintWithScroll();
+  setTimeout(() => {
+    tui.lastContent = tui.lastContent.replace(confirmFooter, savedFooter);
+    paintWithScroll();
+  }, 2000);
+}
+
+function openLoadPicker() {
+  tui.loadList = listReports();
+  if (tui.loadList.length === 0) return;
+  tui.loadIdx = 0;
+  tui.loadMode = true;
+  tui.phase = 'live';
+  const overlay = renderLoadOverlay(getWidth());
+  showOverlay(overlay);
+}
+
+/** Visual reset only — the runtime stays connected. */
+function resetToSplash() {
+  stopRenderAnimation();
+  tui.lastContent = '';
+  const connectedAgent = tui.agentState?.agent;
+  const connectedModel = tui.agentState?.model;
+  tui.agentState = connectedAgent ? { agent: connectedAgent, model: connectedModel } : null;
+  tui.renderMeta = { model: null, tools: null, cost: null, as_of: null };
+  tui.blocks = null;
+  tui.phase = 'splash';
+  const hint = tui.lastBlocks ? '/restore · /load' : '/load';
+  const connLabel = connectedAgent
+    ? `Connected · ${connectedModel ? `${connectedAgent} · ${connectedModel}` : connectedAgent}`
+    : 'Waiting for agent';
+  tui.splashMsg = `${connLabel} · ${hint}`;
+  startSplashAnimation();
+}
+
+function quitApp() {
+  process.stdout.write('\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1006l');
+  process.exit(0);
+}
+
+function isRunning() {
+  const stage = tui.agentState?.stage;
+  return stage === 'resolving' || stage === 'gathering' || stage === 'analyzing';
+}
+
+// ── Keyboard input ────────────────────────────────────────────────────────────
+//
+// Order matters. Modal overlays claim keys first; then the control keys; then
+// everything printable falls through to the command line, which is always open.
+
+export function handleKeypress(ch, key) {
   if (!key) key = {};
 
-  // Ctrl+C: always exit
-  if (key.ctrl && key.name === 'c') {
-    process.exit(0);
-  }
-
   // A click is not a keystroke. Without this the coordinates in the mouse
-  // report are typed into whatever field is open.
+  // report are typed into the command line.
   if (isMouseSequenceActive()) return;
 
+  // ── Ctrl-C: abandon the run, else clear the line. Never exits. ──
+  if (key.ctrl && key.name === 'c') {
+    // Get out of whatever is covering the screen first. A user reaching for
+    // Ctrl-C inside a picker wants the picker gone, not the query abandoned.
+    if (closeAnyOverlay()) return;
+    if (isRunning()) {
+      submitQuery('/cancel').catch(() => {});
+      return;
+    }
+    if (tui.queryInput) return clearPrompt();
+    return;
+  }
+
+  // ── Ctrl-D: exit, and only from an empty line ──
+  if (key.ctrl && key.name === 'd') {
+    if (!tui.queryInput) quitApp();
+    return;
+  }
+
+  // ── Modal overlays keep priority ──────────────────────────────────
   if (tui.inputMode) {
     if (key.name === 'escape') {
       closeInput();
@@ -413,99 +588,14 @@ function handleKeypress(ch, key) {
     return;
   }
 
-  if (tui.queryInput !== null) {
-    if (key.name === 'escape') return cancelQueryInput();
-    if (key.name === 'return') return void sendQueryInput();
-    if (key.name === 'backspace') {
-      tui.queryInput = tui.queryInput.slice(0, -1);
-    } else if (typeof ch === 'string' && ch.length === 1 && !key.ctrl && !key.meta) {
-      tui.queryInput += ch;
-    } else {
-      return;
-    }
-    drawQueryPrompt();
-    return;
-  }
-
-  // n always opens the compact prompt, including after a failed query.
-  if (ch === 'n') {
-    showQueryInput();
-    return;
-  }
-
-  // ── Help overlay (works from any phase) ────────────────────────
-  if (ch === '?') {
-    tui.helpVisible = !tui.helpVisible;
-    if (tui.helpVisible) {
-      stopSplashAnimation();
-      const w = getWidth();
-      const overlay = renderHelpOverlay(w);
-      process.stdout.write('\x1b[2J\x1b[H' + overlay);
-    } else {
-      if (tui.phase === 'splash') {
-        startSplashAnimation();
-      } else {
-        paintWithScroll();
-      }
-    }
-    return;
-  }
-
-  // Esc dismisses help overlay from any phase
-  if (key.name === 'escape' && tui.helpVisible) {
-    tui.helpVisible = false;
-    if (tui.phase === 'splash') {
-      startSplashAnimation();
-    } else {
-      paintWithScroll();
-    }
-    return;
-  }
-
-  // ── Splash-phase inputs ────────────────────────────────────────
-  if (tui.phase === 'splash') {
-    // q on splash: exit the TUI entirely
-    if (ch === 'q') {
-      process.stdout.write('\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1006l');
-      process.exit(0);
-    }
-    // Enter/r: restore last dashboard if available
-    if ((key.name === 'return' || ch === 'r') && tui.lastBlocks) {
-      tui.blocks = tui.lastBlocks;
-      tui.phase = 'live';
-      // Paint immediately so tui.lastContent is set (enables q and scroll)
-      const output = runLayout(tui.lastBlocks, null, getWidth());
-      paintScreen(output);
-      return;
-    }
-    // l: load saved report
-    if (ch === 'l') {
-      tui.loadList = listReports();
-      if (tui.loadList.length === 0) return;
-      tui.loadIdx = 0;
-      tui.loadMode = true;
-      tui.phase = 'live';
-      const overlay = renderLoadOverlay(getWidth());
-      tui.lastContent = overlay;
-      process.stdout.write('\x1b[2J\x1b[H' + overlay);
-      return;
-    }
-    return;
-  }
-
-  if (!tui.lastContent) return;
-  const pageSize = Math.max(1, getHeight() - 2);
-  let changed = false;
-
-  // ── Clarification navigation ─────────────────────────────────────
   if (tui.askMode) {
     if (key.name === 'escape') {
       submitQuery('/pick cancel').catch(() => {});
       closeAsk();
-    } else if (key.name === 'up' || ch === 'k') {
+    } else if (key.name === 'up') {
       tui.askIdx = Math.max(0, tui.askIdx - 1);
       process.stdout.write('\x1b[2J\x1b[H' + renderAskOverlay(getWidth()));
-    } else if (key.name === 'down' || ch === 'j') {
+    } else if (key.name === 'down') {
       tui.askIdx = Math.min(tui.askList.length - 1, tui.askIdx + 1);
       process.stdout.write('\x1b[2J\x1b[H' + renderAskOverlay(getWidth()));
     } else if (key.name === 'return' && tui.askList.length > 0) {
@@ -516,42 +606,33 @@ function handleKeypress(ch, key) {
     return;
   }
 
-  // ── Model picker navigation ──────────────────────────────────────
   if (tui.modelMode) {
     if (key.name === 'escape') {
       closeModelPicker();
-    } else if (key.name === 'up' || ch === 'k') {
+    } else if (key.name === 'up') {
       tui.modelIdx = Math.max(0, tui.modelIdx - 1);
       process.stdout.write('\x1b[2J\x1b[H' + renderModelOverlay(getWidth()));
-    } else if (key.name === 'down' || ch === 'j') {
+    } else if (key.name === 'down') {
       tui.modelIdx = Math.min(tui.modelList.length - 1, tui.modelIdx + 1);
       process.stdout.write('\x1b[2J\x1b[H' + renderModelOverlay(getWidth()));
     } else if (key.name === 'return' && tui.modelList.length > 0) {
       const choice = tui.modelList[tui.modelIdx];
       tui.modelCurrent = { agent: choice.agent, model: choice.id ?? null };
-      // The runtime owns provider selection; say it in the language it parses.
-      // Submitted directly so the dashboard survives the switch.
       submitQuery(`/model ${choice.agent}:${choice.id ?? 'default'}`).catch(() => {});
       closeModelPicker();
     }
     return;
   }
 
-  // ── Load overlay navigation ──────────────────────────────────────
   if (tui.loadMode) {
     if (key.name === 'escape') {
       tui.loadMode = false;
-      if (tui.lastBlocks) {
-        paintWithScroll();
-      } else {
-        stopSplashAnimation();
-        tui.phase = 'splash';
-        startSplashAnimation();
-      }
-    } else if (key.name === 'up' || ch === 'k') {
+      hideOverlay();
+      paintOrSplash();
+    } else if (key.name === 'up') {
       tui.loadIdx = Math.max(0, tui.loadIdx - 1);
       process.stdout.write('\x1b[2J\x1b[H' + renderLoadOverlay(getWidth()));
-    } else if (key.name === 'down' || ch === 'j') {
+    } else if (key.name === 'down') {
       tui.loadIdx = Math.min(tui.loadList.length - 1, tui.loadIdx + 1);
       process.stdout.write('\x1b[2J\x1b[H' + renderLoadOverlay(getWidth()));
     } else if (key.name === 'return' && tui.loadList.length > 0) {
@@ -559,99 +640,64 @@ function handleKeypress(ch, key) {
         const file = path.join(REPORTS_DIR, tui.loadList[tui.loadIdx]);
         const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
         tui.loadMode = false;
+        hideOverlay();
         if (saved.meta) tui.renderMeta = { ...tui.renderMeta, ...saved.meta };
         if (Array.isArray(saved.blocks)) {
           tui.lastBlocks = saved.blocks;
           tui.blocks = saved.blocks;
           repaint();
         }
-      } catch { tui.loadMode = false; paintWithScroll(); }
+      } catch { tui.loadMode = false; hideOverlay(); paintOrSplash(); }
     }
     return;
   }
 
-  // ── Save ──────────────────────────────────────────────────────────
-  if (ch === 's') {
-    const filename = saveReport();
-    if (filename) {
-      const msg = `${BRAND}✓${RESET} ${DIM}Saved: ${filename}${RESET}`;
-      const w = getWidth();
-      const savedFooter = buildFooter(w);
-      const confirmFooter = `  ${msg}`;
-      tui.lastContent = tui.lastContent.replace(savedFooter, confirmFooter);
-      paintWithScroll();
-      setTimeout(() => { tui.lastContent = tui.lastContent.replace(confirmFooter, savedFooter); paintWithScroll(); }, 2000);
-    }
+  if (tui.helpVisible) {
+    if (key.name === 'escape' || (key.ctrl && key.name === 'g')) return toggleHelp();
     return;
   }
 
-  // ── Load ──────────────────────────────────────────────────────────
-  if (ch === 'l') {
-    tui.loadList = listReports();
-    tui.loadIdx = 0;
-    tui.loadMode = true;
-    process.stdout.write('\x1b[2J\x1b[H' + renderLoadOverlay(getWidth()));
-    return;
+  // ── Control keys ──────────────────────────────────────────────────
+  if (key.ctrl && key.name === 'g') return toggleHelp();
+  if (key.ctrl && key.name === 's') return saveCurrentReport();
+  if (key.ctrl && key.name === 'o') return openLoadPicker();
+  if (key.ctrl && key.name === 'u') return clearPrompt();
+
+  // ── Command line ──────────────────────────────────────────────────
+  if (key.name === 'return') return void sendQueryInput();
+  if (key.name === 'up')     return recallHistory(1);
+  if (key.name === 'down')   return recallHistory(-1);
+  if (key.name === 'backspace') {
+    tui.queryInput = tui.queryInput.slice(0, -1);
+    return drawQueryPrompt();
+  }
+  if (typeof ch === 'string' && ch.length === 1 && !key.ctrl && !key.meta) {
+    tui.queryInput += ch;
+    return drawQueryPrompt();
   }
 
-  // (? and Esc for help handled above, before phase checks)
+  // ── Everything below reads the answer, and needs one to read ──────
+  if (tui.phase === 'splash' || !tui.lastContent) return;
 
-  // ── Tab focus cycling ────────────────────────────────────────────
   if (key.name === 'tab' && tui.panelIds.length > 0) {
     const ids = tui.panelIds;
     const cur = ids.indexOf(tui.focusedPanel);
-    if (key.shift) {
-      // Shift+Tab: backwards
-      tui.focusedPanel = ids[(cur - 1 + ids.length) % ids.length];
-    } else {
-      // Tab: forwards (circular)
-      tui.focusedPanel = ids[(cur + 1) % ids.length];
-    }
-    paintWithScroll();
-    return;
+    tui.focusedPanel = key.shift
+      ? ids[(cur - 1 + ids.length) % ids.length]
+      : ids[(cur + 1) % ids.length];
+    return paintWithScroll();
   }
 
-  // ── Number keys: run follow-up query (only when complete) ────────
-  // Guard: ignore digits from mouse SGR sequences — check both escape prefix and recent mouse activity
-  const num = parseInt(ch, 10);
-  if (num >= 1 && num <= 9 && !key.sequence?.startsWith('\x1b[') && !isMouseRecent() && tui.agentState?.stage === 'complete' && tui.agentState?.follow_ups?.length) {
-    const fu = tui.agentState.follow_ups.find(f => f.key === String(num));
-    if (fu?.question) {
-      void sendRuntimeQuery(fu.question);
-      return;
-    }
-  }
-
-  // ── Quit — return to splash ────────────────────────────────────────
-  if (ch === 'q') {
-    stopRenderAnimation();
-    tui.lastContent = '';
-    // Keep lastBlocks so Enter can restore from splash
-    const connectedAgent = tui.agentState?.agent;
-    const connectedModel = tui.agentState?.model;
-    // Preserve connection info — agent stays connected, only clear render state
-    tui.agentState = connectedAgent ? { agent: connectedAgent, model: connectedModel } : null;
-    tui.renderMeta = { model: null, tools: null, cost: null, as_of: null };
-    // Agent stays connected — q is visual reset only
-    tui.blocks = null;
-    tui.phase = 'splash';
-    const hint = tui.lastBlocks ? 'Enter restore · l load' : 'l load';
-    // Show connected status if agent is still connected, not "Waiting for agent"
-    const connLabel = connectedAgent
-      ? `Connected · ${connectedModel ? `${connectedAgent} · ${connectedModel}` : connectedAgent}`
-      : 'Waiting for agent';
-    tui.splashMsg = `${connLabel} · ${hint}`;
-    startSplashAnimation();
-    return;
-  }
-
-  // ── Scroll ────────────────────────────────────────────────────────
-  if (key.name === 'up' || ch === 'k') { tui.scrollOffset = Math.max(0, tui.scrollOffset - 1); changed = true; }
-  else if (key.name === 'down' || ch === 'j') { tui.scrollOffset += 1; changed = true; }
-  else if (key.name === 'pageup' || (key.sequence === '\x1b[5~')) { tui.scrollOffset = Math.max(0, tui.scrollOffset - pageSize); changed = true; }
-  else if (key.name === 'pagedown' || (key.sequence === '\x1b[6~') || ch === ' ') { tui.scrollOffset += pageSize; changed = true; }
-  else if (ch === 'g') { tui.scrollOffset = 0; changed = true; }
-  else if (ch === 'G') { tui.scrollOffset = Infinity; changed = true; }
+  // Scrolling moved off j/k and the bare arrows: those are typing and history
+  // now. The wheel, the page keys and Ctrl-arrows remain.
+  const pageSize = Math.max(1, getHeight() - 2);
+  let changed = false;
+  if (key.ctrl && key.name === 'up')        { tui.scrollOffset = Math.max(0, tui.scrollOffset - 1); changed = true; }
+  else if (key.ctrl && key.name === 'down') { tui.scrollOffset += 1; changed = true; }
+  else if (key.name === 'pageup'   || key.sequence === '\x1b[5~') { tui.scrollOffset = Math.max(0, tui.scrollOffset - pageSize); changed = true; }
+  else if (key.name === 'pagedown' || key.sequence === '\x1b[6~') { tui.scrollOffset += pageSize; changed = true; }
+  else if (key.name === 'home') { tui.scrollOffset = 0; changed = true; }
+  else if (key.name === 'end')  { tui.scrollOffset = Infinity; changed = true; }
 
   if (changed) paintWithScroll();
 }
@@ -745,7 +791,15 @@ async function main() {
   // Keep alive — process stays running via stdin (raw mode) + HTTP server
 }
 
-main().catch(err => {
-  process.stderr.write(`Fatal: ${err.message}\n${err.stack}\n`);
-  process.exit(1);
-});
+// Only boot when run as the entry point. The runtime spawns this file directly
+// (`node terminal/app.js`), so this is true in production; importing it from a
+// test gets the exported handlers without taking over the terminal.
+const isEntryPoint = Boolean(process.argv[1]) &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isEntryPoint) {
+  main().catch(err => {
+    process.stderr.write(`Fatal: ${err.message}\n${err.stack}\n`);
+    process.exit(1);
+  });
+}

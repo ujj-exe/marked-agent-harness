@@ -2,7 +2,7 @@
 set -eu
 
 main() {
-    REPO_URL=${MARKED_REPO_URL:-https://github.com/ujjwalpreenja1308-web/marked-agent-harness.git}
+    REPO_URL=${MARKED_REPO_URL:-https://github.com/ujj-exe/marked-agent-harness.git}
     REF=${MARKED_REF:-main}
     PYTHON_SOURCE=${MARKED_PYTHON_SOURCE:-git+${REPO_URL}@${REF}}
     INSTALL_DIR=${MARKED_INSTALL_DIR:-$HOME/.marked/harness}

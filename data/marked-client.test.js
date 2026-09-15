@@ -35,6 +35,17 @@ describe('MarkedClient', () => {
     expect(attempts).toBe(2);
   });
 
+  it('calls the canonical live quote endpoint', async () => {
+    let request;
+    const client = new MarkedClient({ apiKey: 'mk_test', fetchImpl: async (url, options) => {
+      request = { url, options };
+      return response({ data: { symbol: 'RELIANCE', price: 1428.2, is_stale: false } });
+    }});
+    const result = await client.quote({ symbol: 'RELIANCE', exchange: 'NSE' });
+    expect(request.url).toBe('https://api.marked.run/v1/prices?ticker=RELIANCE&exchange=NSE&latest=true');
+    expect(result.data.price).toBe(1428.2);
+  });
+
   it('resolves a canonical company before fetching its instruments', async () => {
     const calls = [];
     const client = new MarkedClient({ apiKey: 'mk_test', fetchImpl: async (url, options) => {

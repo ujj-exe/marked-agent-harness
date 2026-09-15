@@ -16,6 +16,7 @@ export class TuiClient {
     this.queryServer = null;
     this.queryQueue = [];
     this.queryWaiters = [];
+    this.onCancel = null;
   }
 
   async start() {
@@ -74,6 +75,13 @@ export class TuiClient {
   }
 
   receiveQuery(question) {
+    // A cancel is about the job already running, so it must not join the queue
+    // behind it — queued, it would be read as the *next* question and the run
+    // the user abandoned would finish anyway.
+    if (typeof question === 'string' && /^\/cancel\s*$/i.test(question.trim())) {
+      this.onCancel?.();
+      return;
+    }
     const waiter = this.queryWaiters.shift();
     if (waiter) waiter(question);
     else this.queryQueue.push(question);

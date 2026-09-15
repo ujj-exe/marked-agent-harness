@@ -5,17 +5,18 @@
  * Sticky header + scrollable body + scroll indicator + footer.
  */
 
-import { DESK } from '../runtime/commands.js';
+import { CAPABILITIES, DESK, LIVE } from '../runtime/commands.js';
 import { BRAND, BOLD, DIM, RESET, LIME_D, LIME_M, LABEL, REPORTS_DIR, tui } from './state.js';
-import { visLen, ansiTrunc } from '../src/index.js';
+import { visLen, ansiTrunc, fg, palette } from '../src/index.js';
 import { renderBlocks, presetToBlocks } from './engine.js';
 import { estimateCost } from './cost.js';
 import { SPINNER_FRAMES } from './splash.js';
 
 let _spinnerTick = 0;
 
-// Focus indicator color — #CDF139 lime
-const FOCUS_COLOR = '\x1b[38;2;205;241;57m';
+// Focus indicator — the theme's highlight, read per use so a theme change
+// during a session recolours the ring with everything else.
+const FOCUS_COLOR_FOR = () => fg(palette('highlight') || palette('accent'));
 
 // ── Header (TUI chrome) ─────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ export function buildHeader(width) {
   if (s?.skill) left += `${sep}${LABEL}:${s.skill}${RESET}`;
   if (s?.query) left += `${sep}${BRAND}${s.query}${RESET}`;
 
+  left = ansiTrunc(left, Math.max(0, width));
   const fillLen = Math.max(0, width - visLen(left));
   return left + `${DIM}${'─'.repeat(fillLen)}${RESET}`;
 }
@@ -46,7 +48,7 @@ export function buildHeader(width) {
  */
 export function focusIndicator(panelName) {
   if (!panelName || tui.focusedPanel !== panelName) return '';
-  return `${FOCUS_COLOR}${BOLD}▶${RESET}  ${DIM}Tab next · ↑↓ scroll${RESET}`;
+  return `${FOCUS_COLOR_FOR()}${BOLD}▶${RESET}  ${DIM}Tab next · ↑↓ scroll${RESET}`;
 }
 
 // ── Help overlay ────────────────────────────────────────────────────────────
@@ -59,7 +61,7 @@ export function renderHelpOverlay(width) {
   const rows = process.stdout.rows ?? 24;
 
   if (rows < 12) {
-    return `${DIM}n query  ↑↓ scroll  Tab focus  s save  l load  ? close  q quit${RESET}`;
+    return `${DIM}type to ask  ⏎ send  ^C cancel  PgUp/Dn scroll  ^S save  ^G close  ^D quit${RESET}`;
   }
 
   const sep = `${DIM}${'─'.repeat(width)}${RESET}`;
@@ -70,38 +72,48 @@ export function renderHelpOverlay(width) {
     `  ${BRAND}${BOLD}MARKED${RESET}  ${DIM}Keyboard Reference${RESET}`,
     sep,
     '',
+    `  ${BRAND}${BOLD}COMMAND LINE${RESET}`,
+    K('(just type)', 'The prompt is always open — no key opens it'),
+    K('Enter', 'Ask'),
+    K('↑ ↓', 'Previous / next question'),
+    K('Ctrl+C', 'Cancel the running query, else clear the line'),
+    K('Ctrl+U', 'Clear the line'),
+    K('Ctrl+D', 'Quit (empty line only)'),
+    '',
+    `  ${BRAND}${BOLD}FAST PATH${RESET}  ${DIM}data only — no reasoning model, no spend${RESET}`,
+    K('RELIANCE', 'A company, straight to its panels'),
+    K('FA <company>', 'Financial profile'),
+    K('GP <company>', 'Price history'),
+    K('OWN <company>', 'Promoter, FII, DII, pledge'),
+    K('ANR <company>', 'Announcements and filings'),
+    K('CACS <company>', 'Corporate actions and events'),
+    '',
     `  ${BRAND}${BOLD}NAVIGATION${RESET}`,
-    K('↑↓  /  j k', 'Scroll up / down'),
     K('PgUp  PgDn', 'Scroll one page'),
-    K('Space', 'Page down'),
-    K('g', 'Jump to top'),
-    K('G', 'Jump to bottom'),
-    K('Tab', 'Next panel'),
-    K('Shift+Tab', 'Previous panel'),
+    K('Ctrl+↑  Ctrl+↓', 'Scroll one line'),
+    K('Home  End', 'Jump to top / bottom'),
+    K('Tab  Shift+Tab', 'Next / previous panel'),
     '',
     `  ${BRAND}${BOLD}ACTIONS${RESET}`,
-    K('s', 'Save report to ~/.marked/reports/'),
-    K('l', 'Load a saved report'),
-    K('n', 'Ask a new research question'),
+    K('Ctrl+S  /save', 'Save report to ~/.marked/reports/'),
+    K('Ctrl+O  /load', 'Load a saved report'),
+    K('Ctrl+G  /help', 'Toggle this help'),
+    K('/reset', 'Return to splash (runtime stays connected)'),
+    K('/quit', 'Quit the terminal'),
     K('/marked <key>', 'Save the Marked API key'),
     K('/history', 'Show saved conversation turns'),
+    K(`${LIVE[0]} ${LIVE[1]}`, LIVE[2]),
     K('/new', 'Start a fresh conversation'),
     K('/model', 'Pick the reasoning provider and model'),
     K('/model claude opus', 'Set provider and model without the picker'),
-    K('1-9', 'Run a follow-up query'),
+    K('/1 … /9', 'Run a follow-up query'),
     '',
     `  ${BRAND}${BOLD}THE TEAM${RESET}`,
     ...DESK.map(([name, arg, desc]) => K(`${name}${arg ? ` ${arg}` : ''}`, desc)),
     '',
-    `  ${BRAND}${BOLD}DISPLAY${RESET}`,
-    K('?', 'Toggle this help'),
-    K('Esc', 'Close help / return to splash'),
-    K('q', 'Return to splash (agent stays connected)'),
+    `  ${BRAND}${BOLD}POWER WORKFLOWS${RESET}`,
+    ...CAPABILITIES.map(([name, arg, desc]) => K(`${name} ${arg}`, desc)),
     '',
-    `  ${BRAND}${BOLD}SPLASH SCREEN${RESET}`,
-    K('Enter', 'Restore last dashboard'),
-    K('l', 'Load a saved report'),
-    K('q', 'Quit terminal'),
     sep,
     `  ${DIM}Marked runtime owns credentials, data and reasoning.${RESET}`,
   ];
@@ -113,7 +125,8 @@ export function renderHelpOverlay(width) {
 // so the colour is a statement that the command will actually fire.
 const DESK_COMMANDS = new Set([
   ...DESK.map(([name]) => name.slice(1)),
-  'marked', 'model', 'new', 'history', 'help',
+  ...CAPABILITIES.map(([name]) => name.slice(1)),
+  'marked', 'model', 'new', 'history', 'help', 'live',
 ]);
 
 /** Light up a recognised leading command so it reads as activated. */
@@ -129,6 +142,27 @@ export function renderQueryOverlay(width, value = '') {
     : value;
   const field = `${LABEL} query ${RESET}${BRAND}›${RESET} ${highlightCommand(displayValue)}${BRAND}█${RESET}`;
   return ansiTrunc(field, Math.max(1, width - 1));
+}
+
+/**
+ * The always-on command line.
+ *
+ * This is the one row that is never taken away: an answer stays on screen
+ * while the next question is typed under it, and a question can be typed
+ * while one is still running. The right-hand hint is the only part that
+ * changes with state, so the field never moves under the cursor.
+ */
+export function renderPromptRow(width, value = '') {
+  const s = tui.agentState;
+  const running = s && (s.stage === 'gathering' || s.stage === 'analyzing' || s.stage === 'resolving');
+  const hint = running
+    ? `${DIM}^C cancel${RESET}`
+    : value
+      ? `${DIM}⏎ ask  ^C clear${RESET}`
+      : `${DIM}/help  ^D quit${RESET}`;
+  const field = renderQueryOverlay(Math.max(1, width - visLen(hint) - 3), value);
+  const gap = Math.max(1, width - visLen(field) - visLen(hint) - 1);
+  return field + ' '.repeat(gap) + hint;
 }
 
 // ── Layout dispatcher ───────────────────────────────────────────────────────
@@ -147,6 +181,12 @@ export function runLayout(layoutOrBlocks, panels, width, focused) {
 
 // ── Footer ──────────────────────────────────────────────────────────────────
 
+function fitSides(left, right, width) {
+  if (visLen(right) >= width) return ansiTrunc(right, Math.max(0, width));
+  left = ansiTrunc(left, Math.max(0, width - visLen(right) - 1));
+  return left + ' '.repeat(Math.max(1, width - visLen(left) - visLen(right))) + right;
+}
+
 export function buildFooter(width) {
   const m = tui.renderMeta;
   const s = tui.agentState;
@@ -159,9 +199,11 @@ export function buildFooter(width) {
   // Agent state: show progress during gathering/analyzing
   if (s && (s.stage === 'gathering' || s.stage === 'analyzing')) {
     const spin = `${BRAND}${SPINNER_FRAMES[_spinnerTick % SPINNER_FRAMES.length]}${RESET}`;
+    const progress = s.progress;
+    const label = progress?.phase === 'writing' ? 'Writing' : s.stage === 'gathering' ? 'Gathering' : 'Analyzing';
     const parts = [
       `  ${gradMark} ${spin}`,
-      s.stage === 'gathering' ? `${DIM}Gathering${RESET}` : `${DIM}Analyzing${RESET}`,
+      `${DIM}${label}${RESET}`,
     ];
     if (s.skill) parts.push(`${LABEL}:${s.skill}${RESET}`);
     if (s.query) parts.push(`${BRAND}${s.query}${RESET}`);
@@ -170,12 +212,18 @@ export function buildFooter(width) {
       parts.push(`${DIM}${called ?? 0}/${total ?? '?'}${RESET}`);
       if (current) parts.push(`${DIM}${current}${RESET}`);
     }
+    if (progress?.phase === 'thinking') parts.push(`${DIM}${(progress.elapsedMs / 1000).toFixed(1)}s${RESET}`);
+    if (progress?.phase === 'writing') {
+      if (progress.completed?.length) parts.push(`${LABEL}${progress.completed.slice(-2).join(', ')}${RESET}`);
+      const width = 8;
+      const filled = Math.min(width, Math.floor(width * (progress.outputTokens || 0) / (progress.targetTokens || 1)));
+      parts.push(`${BRAND}${'█'.repeat(filled)}${DIM}${'░'.repeat(width - filled)}${RESET}`);
+      parts.push(`${DIM}~${(progress.outputTokens || 0).toLocaleString('en-IN')} tok${RESET}`);
+      if (progress.etaSeconds != null) parts.push(`${DIM}~${progress.etaSeconds}s left${RESET}`);
+    }
     const left = parts.join(` ${DIM}·${RESET} `);
-    const keys = `${DIM}n new query  ↑↓ scroll  q quit${RESET}`;
-    const leftVis = visLen(left);
-    const rightVis = visLen(keys);
-    const gap = Math.max(2, width - leftVis - rightVis);
-    return left + ' '.repeat(gap) + keys;
+    const keys = `${DIM}^C cancel  PgUp/Dn scroll${RESET}`;
+    return fitSides(left, keys, width);
   }
 
   // Complete or idle state: standard footer with meta
@@ -206,16 +254,12 @@ export function buildFooter(width) {
   // Show follow-ups hint when complete
   let keys;
   if (s?.stage === 'complete' && s?.follow_ups?.length > 0) {
-    keys = `${DIM}n new query  1-${s.follow_ups.length} drill  ↑↓ scroll  s save  q quit${RESET}`;
+    keys = `${DIM}/1-/${s.follow_ups.length} drill  PgUp/Dn scroll  ^S save  ^G help${RESET}`;
   } else {
-    keys = `${DIM}n new query  ↑↓ scroll  s save  l load  q quit${RESET}`;
+    keys = `${DIM}PgUp/Dn scroll  ^S save  ^O load  ^G help  ^D quit${RESET}`;
   }
 
-  const leftVis  = visLen(left);
-  const rightVis = visLen(keys);
-  const gap = Math.max(2, width - leftVis - rightVis);
-
-  return left + ' '.repeat(gap) + keys;
+  return fitSides(left, keys, width);
 }
 
 // ── Load overlay ────────────────────────────────────────────────────────────
@@ -282,6 +326,12 @@ export function renderModelOverlay(width) {
   lines.push('');
   lines.push(`  ${BRAND}▐${RESET}${DIM} Marked${RESET}  ${LABEL}Reasoning Model${RESET}`);
   lines.push(`  ${DIM}↑↓ navigate · Enter select · Esc cancel${RESET}`);
+  // The runtime reads one command at a time, so a pick made during a run is
+  // queued behind it. Saying so beats looking broken for three minutes.
+  const stage = tui.agentState?.stage;
+  if (stage === 'resolving' || stage === 'gathering' || stage === 'analyzing') {
+    lines.push(`  ${palette('warning') ? fg(palette('warning')) : ''}a query is running — this applies to the next one, or ^C to cancel it first${RESET}`);
+  }
   lines.push('');
   if (tui.modelList.length === 0) {
     lines.push(`  ${DIM}No reasoning providers available${RESET}`);
@@ -335,6 +385,22 @@ let _animTimer = null;
  * only lives in the footer, so we cursor-address that single line.
  * Full repaints happen on render events and scroll input, not here.
  */
+/**
+ * The terminal row the footer occupies.
+ *
+ * Both the full paint and the 110ms spinner repaint need this, and they must
+ * agree: when they drifted apart the spinner drew a second footer on top of
+ * the scroll indicator. The prompt always owns the last row.
+ *
+ * @param {number} totalLines lines in `tui.lastContent`
+ * @param {number} rows terminal height
+ */
+export function footerRow(totalLines, rows) {
+  const rowsForContent = rows - 1;                 // the prompt takes one
+  if (totalLines <= rowsForContent) return totalLines;
+  return rows - 2;                                 // …footer, indicator, prompt
+}
+
 export function startRenderAnimation() {
   stopRenderAnimation();
   const tick = () => {
@@ -352,13 +418,7 @@ export function startRenderAnimation() {
     const footer = buildFooter(w);
     const padded = footer + ' '.repeat(Math.max(0, w - visLen(footer)));
 
-    if (totalLines <= rows) {
-      // Content fits — footer is on the last content line
-      process.stdout.write(`\x1b[${totalLines};1H${padded}`);
-    } else {
-      // Content overflows — footer is pinned to the last terminal row
-      process.stdout.write(`\x1b[${rows - 1};1H${padded}`);
-    }
+    process.stdout.write(`\x1b[${footerRow(totalLines, rows)};1H${padded}`);
     _animTimer = setTimeout(tick, 110);
   };
   _animTimer = setTimeout(tick, 110);
@@ -380,9 +440,9 @@ function buildActionBar(width) {
   const lines = [];
   lines.push(`${DIM}┄┄ WHAT'S NEXT ${'┄'.repeat(Math.max(0, width - 18))}${RESET}`);
   for (const f of s.follow_ups) {
-    lines.push(`  ${BRAND}${f.key}${RESET}  ${DIM}${f.label}${RESET}`);
+    lines.push(`  ${BRAND}/${f.key}${RESET}  ${DIM}${f.label}${RESET}`);
   }
-  lines.push(`  ${DIM}q${RESET}  ${DIM}Done — return to Marked runtime${RESET}`);
+  lines.push(`  ${DIM}/reset${RESET}  ${DIM}Done — return to Marked runtime${RESET}`);
   lines.push(`${DIM}${'─'.repeat(width)}${RESET}`);
   return lines.join('\n');
 }
@@ -431,17 +491,23 @@ export function paintWithScroll(clear = true) {
   allLines[0] = buildHeader(w);
   displayContent = allLines.join('\n');
 
-  if (totalLines <= rows) {
+  // The prompt owns the last row in every path, so reserve it before deciding
+  // whether the content fits.
+  const promptRow = renderPromptRow(w, tui.queryInput ?? '');
+  const rowsForContent = rows - 1;
+
+  if (totalLines <= rowsForContent) {
     if (clear) {
-      process.stdout.write('\x1b[2J\x1b[H' + displayContent);
+      process.stdout.write('\x1b[2J\x1b[H' + displayContent + `\x1b[${rows};1H\x1b[2K` + promptRow);
     } else {
       // Overwrite in place — pad each line to full width to cover old content
       const padded = allLines.map(l => l + ' '.repeat(Math.max(0, w - visLen(l)))).join('\n');
       process.stdout.write('\x1b[H' + padded);
-      // Clear any leftover rows below
-      for (let r = totalLines + 1; r <= rows; r++) {
+      // Clear any leftover rows below, stopping short of the prompt row.
+      for (let r = totalLines + 1; r < rows; r++) {
         process.stdout.write(`\x1b[${r};1H\x1b[2K`);
       }
+      process.stdout.write(`\x1b[${rows};1H\x1b[2K` + promptRow);
     }
     return;
   }
@@ -450,7 +516,7 @@ export function paintWithScroll(clear = true) {
   const stickyLine = allLines[0];
   const bodyLines  = allLines.slice(1, allLines.length - 1);
   const footerLine = allLines[allLines.length - 1];
-  const bodyRows   = rows - 3; // sticky(1) + footer(1) + indicator(1)
+  const bodyRows   = rows - 4; // sticky(1) + footer(1) + indicator(1) + prompt(1)
 
   const maxOffset = Math.max(0, bodyLines.length - bodyRows);
   tui.scrollOffset = Math.max(0, Math.min(tui.scrollOffset, maxOffset));
@@ -471,7 +537,7 @@ export function paintWithScroll(clear = true) {
   const safeHeader = visLen(stickyLine) > w ? ansiTrunc(stickyLine, w) : stickyLine;
 
   // Render with explicit cursor addressing per row — no wrap issues
-  const allOutput = [safeHeader, ...viewLines, footerLine, indicator];
+  const allOutput = [safeHeader, ...viewLines, footerLine, indicator, promptRow];
   let buf = '\x1b[2J'; // clear screen
   for (let r = 0; r < allOutput.length; r++) {
     const line = allOutput[r];

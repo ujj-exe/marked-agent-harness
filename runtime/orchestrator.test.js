@@ -17,6 +17,122 @@ function harness(data) {
 }
 
 describe('Marked orchestrator', () => {
+  it('finishes an empty screen without buying a model call and renders its filters', async () => {
+    const renders = [];
+    let agentCalls = 0;
+    let saved;
+    const orchestrator = new MarkedOrchestrator({
+      data: { screen: async () => ({ data: [], meta: { universe: 1799, matched: 0, notes: ['only 0 companies have pledged_pct ingested'] } }) },
+      agent: { name: 'claude', run: async () => { agentCalls += 1; return result(); } },
+      tui: { render: async payload => { renders.push(payload); } },
+      save: session => { saved = session; },
+    });
+    await orchestrator.run('Screen companies with net margin above 10% and promoter pledge below 1%');
+    const filterTable = renders.flatMap(render => render.blocks || []).find(block => block.id === 'screen-filters');
+    expect(filterTable.table.rows).toEqual([
+      { cells: ['net_margin', '> 10.0%'] },
+      { cells: ['pledged', '< 1.0%'] },
+    ]);
+    expect(agentCalls).toBe(0);
+    expect(saved.data_only).toBe(true);
+    expect(renders.at(-1)._state.stage).toBe('complete');
+  });
+
+  it('still reasons over a non-empty screen', async () => {
+    let agentCalls = 0;
+    const orchestrator = new MarkedOrchestrator({
+      data: { screen: async () => ({ data: [{ company_id: 'co_1', common_name: 'Example', symbol: 'EXAMPLE', metrics: { net_margin: 0.2 } }], meta: { universe: 1, matched: 1 } }) },
+      agent: { name: 'claude', run: async () => { agentCalls += 1; return result(); } },
+      tui: { render: async () => ({}) },
+      save: () => {},
+    });
+    await orchestrator.run('Screen companies with net margin above 10%');
+    expect(agentCalls).toBe(1);
+  });
+
+  it('patches completed streamed fields before the final verdict', async () => {
+    const renders = [];
+    const agent = {
+      name: 'claude',
+      run: async (_prompt, options) => {
+        options.onProgress({
+          phase: 'writing', elapsedMs: 15000, outputTokens: 800, targetTokens: 12000,
+          etaSeconds: 107, lastField: 'catalysts', liveProse: true,
+          fields: { summary: 'Early headline', thesis: 'Early thesis', catalysts: ['New capacity'] },
+        });
+        return result();
+      },
+    };
+    const orchestrator = new MarkedOrchestrator({
+      data: {}, agent,
+      tui: { render: async payload => { renders.push(payload); } },
+      save: () => {},
+    });
+    const session = { mode: 'research', requested_as_of: null };
+
+    await orchestrator.complete(session, {
+      question: 'Analyze Reliance', asOf: '2026-09-15', agentName: 'claude',
+      packet: {}, evidence: [], blocks: [], totalTools: 0, mode: 'research',
+    });
+
+    const verdicts = renders.flatMap(render => render.blocks || []).filter(block => block.id === 'verdict');
+    expect(verdicts[0].data).toMatchObject({ thesis: 'Early thesis', catalysts: ['New capacity'] });
+    expect(renders.find(render => render._state?.progress)?._state.progress.phase).toBe('writing');
+    expect(verdicts.at(-1).data.thesis).toBe('Evidence-led thesis');
+  });
+
+  it('adds as_of to non-financial datasets only for an explicit rewind', async () => {
+    const calls = [];
+    const entity = { company: { company_id: 'co_ril', common_name: 'Reliance' }, securities: [{ exchange: 'NSE', symbol: 'RELIANCE', segment: 'CASH' }] };
+    const data = {
+      resolveCompany: async () => entity,
+      prices: async params => { calls.push(['prices', params]); return { data: [] }; },
+      financials: async () => ({ data: [] }),
+      metrics: async () => ({ data: [] }),
+      shareholding: async params => { calls.push(['shareholding', params]); return { data: [] }; },
+      filings: async params => { calls.push(['filings', params]); return { data: [] }; },
+      corporateActions: async params => { calls.push(['actions', params]); return { data: [] }; },
+      events: async params => { calls.push(['events', params]); return { data: [] }; },
+    };
+    const at = '2024-03-01T23:59:59.999Z';
+    await harness(data).orchestrator.run('RELIANCE', { asOf: at, pointInTime: true, dataOnly: true });
+    expect(calls.every(([, params]) => params.as_of === at)).toBe(true);
+
+    calls.length = 0;
+    await harness(data).orchestrator.run('RELIANCE', { asOf: at, dataOnly: true });
+    expect(calls.every(([, params]) => !('as_of' in params))).toBe(true);
+  });
+
+  it('routes a scoped risk command through the full company packet and risk procedure', async () => {
+    const calls = [];
+    let prompt = '';
+    let saved;
+    const entity = { company: { company_id: 'co_ril', common_name: 'Reliance' }, securities: [{ exchange: 'NSE', symbol: 'RELIANCE', segment: 'CASH' }] };
+    const data = {
+      resolveCompany: async reference => { calls.push(`resolve:${reference}`); return entity; },
+      prices: async () => { calls.push('prices'); return { data: [] }; },
+      financials: async () => { calls.push('financials'); return { data: [] }; },
+      metrics: async () => { calls.push('metrics'); return { data: [] }; },
+      shareholding: async () => { calls.push('shareholding'); return { data: [] }; },
+      filings: async () => { calls.push('filings'); return { data: [] }; },
+      corporateActions: async () => { calls.push('actions'); return { data: [] }; },
+      events: async () => { calls.push('events'); return { data: [] }; },
+    };
+    const orchestrator = new MarkedOrchestrator({
+      data,
+      agent: { name: 'claude', run: async value => { prompt = value; return result(); } },
+      tui: { render: async () => ({}) },
+      save: session => { saved = session; },
+    });
+    await orchestrator.run('Analyze India-market risks and event impact: Reliance', {
+      intentOverride: { kind: 'risk', references: ['Reliance'] },
+    });
+    expect(calls).toEqual(['resolve:Reliance', 'prices', 'financials', 'metrics', 'shareholding', 'filings', 'actions', 'events']);
+    expect(prompt).toContain('Desk procedure (risk)');
+    expect(prompt).toContain('transmission channel');
+    expect(saved.skill).toBe('risk');
+  });
+
   it('routes broad India macro questions through Marked query', async () => {
     const h = harness({ query: async () => ({ data: { evidence: [{ title: 'RBI policy', value: 'held' }] } }) });
     await h.orchestrator.run('What is the RBI outlook?');

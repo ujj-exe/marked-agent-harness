@@ -6,19 +6,24 @@
  */
 
 import { BRAND, BOLD, DIM, RESET, LABEL, VERSION } from './state.js';
-import { LOGO_B, WORDMARK, WORDMARK_WIDTH } from './logo.js';
+import { logoBlock, wordmark, WORDMARK_WIDTH } from './logo.js';
+import { fg, palette, shade } from '../src/index.js';
 import { DESK } from '../runtime/commands.js';
 
-// Pulse: ▐██ breathes lime → bright-white → lime → dim → recover
-export const PULSE_COLORS = [
-  '\x1b[38;2;192;255;0m',
-  '\x1b[38;2;215;255;40m',
-  '\x1b[38;2;240;255;90m',
-  '\x1b[38;2;215;255;40m',
-  '\x1b[38;2;192;255;0m',
-  '\x1b[38;2;155;210;0m',
-  '\x1b[38;2;192;255;0m',
-];
+// Pulse: ▐██ breathes accent → bright → accent → dim → recover. Seven frames
+// derived from the accent, so the breath stays in the theme's own hue.
+export function pulseColors() {
+  const accent = palette('accent') || '#ffffff';
+  return [
+    fg(accent),
+    fg(shade(accent, 1.18)),
+    fg(shade(accent, 1.38)),
+    fg(shade(accent, 1.18)),
+    fg(accent),
+    fg(shade(accent, 0.72)),
+    fg(accent),
+  ];
+}
 
 export const SPINNER_FRAMES = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
 
@@ -34,8 +39,22 @@ export const RUNTIME_AGENTS = ['marked', 'claude', 'codex', 'openai-codex'];
  * @param {number} maxRows - Max terminal rows available
  * @returns {string} ANSI splash screen
  */
-export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
-  const pc = PULSE_COLORS[pulseFrame % PULSE_COLORS.length];
+// The status line used to be pushed to the last row, which on a tall terminal
+// left a screen of dead space between the desk and the prompt. One blank row
+// keeps the block together; the pad only grows if the terminal is short enough
+// that the content would otherwise collide with the status.
+const BOTTOM_ROWS = 2;
+function padToStatus(lines, maxRows, gap = 1) {
+  const target = Math.min(maxRows - BOTTOM_ROWS, lines.length + gap);
+  while (lines.length < target) lines.push('');
+}
+
+/**
+ * Render the splash screen as an ANSI string.
+ */
+export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999, liveTape = []) {
+  const pulse = pulseColors();
+  const pc = pulse[pulseFrame % pulse.length];
   const mark  = `${pc}${BOLD}▐██${RESET}`;
   const spin  = `${pc}${SPINNER_FRAMES[pulseFrame % SPINNER_FRAMES.length]}${RESET}`;
   const vStr = `${BRAND}${VERSION.current}${RESET}`;
@@ -58,12 +77,12 @@ export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
     lines.push('');
     // Block wordmark when it fits with the two-space gutter, compact mark otherwise.
     if (width >= WORDMARK_WIDTH + 4 && maxRows >= 26) {
-      for (const row of WORDMARK) lines.push(`  ${row}`);
+      for (const row of wordmark()) lines.push(`  ${row}`);
       lines.push('');
       lines.push(`  ${DIM}INDIA  ·  The view that matters.${RESET}`);
     } else {
       // Logo row 4 already contains "The view that matters."
-      for (const row of LOGO_B) lines.push(`  ${row}`);
+      for (const row of logoBlock()) lines.push(`  ${row}`);
     }
     lines.push(sep());
     lines.push('');
@@ -80,10 +99,18 @@ export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
       `${DIM}${'─'.repeat(runtimeW)}${RESET}  `,
     ));
 
+    const tapeLines = liveTape.slice(0, 2).map(quote => {
+      const price = Number(quote.price);
+      const change = Number(quote.change_percent);
+      const priceText = Number.isFinite(price) ? price.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '—';
+      const changeText = Number.isFinite(change) ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '—';
+      return `  ${LABEL}${quote.symbol || '—'}${RESET} ${DIM}${priceText} ${changeText}${quote.is_stale ? ' STALE' : ''}${RESET}`;
+    });
     const runtimeLines = [
       ...RUNTIME_AGENTS.map(a => `  ${BRAND}●${RESET} ${DIM}${a.padEnd(8)}${RESET} ${DIM}connected${RESET}`),
       '',
       `  ${vStr}`,
+      ...(tapeLines.length ? [`  ${LABEL}LIVE TAPE${RESET}`, ...tapeLines] : [`  ${DIM}LIVE TAPE · /live to connect${RESET}`]),
     ];
 
     DESK.forEach(([ name, arg, desc ], i) => {
@@ -98,8 +125,8 @@ export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
     lines.push(sep());
 
     // Pad to push hints + spinner to fixed bottom rows
-    while (lines.length < maxRows - 2) lines.push('');
-    lines.push(`  ${DIM}n${RESET} ${DIM}query${RESET}  ${DIM}/model${RESET}  ${DIM}l${RESET} ${DIM}load${RESET}  ${DIM}?${RESET} ${DIM}help${RESET}  ${DIM}q${RESET} ${DIM}quit${RESET}`);
+    padToStatus(lines, maxRows);
+    lines.push(`  ${DIM}type a company or a question${RESET}  ${DIM}·${RESET}  ${DIM}/model${RESET}  ${DIM}^O${RESET} ${DIM}load${RESET}  ${DIM}^G${RESET} ${DIM}help${RESET}  ${DIM}^D${RESET} ${DIM}quit${RESET}`);
     lines.push(L(
       `  ${spin} ${DIM}${msg}${RESET}`,
       `${DIM}marked.run  ·  ${RESET}${mark}  `,
@@ -118,8 +145,8 @@ export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
     lines.push(`  ${DIM}Workers: ${RUNTIME_AGENTS.join(' · ')}${RESET}`);
     lines.push(sep());
 
-    while (lines.length < maxRows - 2) lines.push('');
-    lines.push(`  ${DIM}n${RESET} ${DIM}query${RESET}  ${DIM}/model${RESET}  ${DIM}l${RESET} ${DIM}load${RESET}  ${DIM}?${RESET} ${DIM}help${RESET}  ${DIM}q${RESET} ${DIM}quit${RESET}`);
+    padToStatus(lines, maxRows);
+    lines.push(`  ${DIM}type a company or a question${RESET}  ${DIM}·${RESET}  ${DIM}/model${RESET}  ${DIM}^O${RESET} ${DIM}load${RESET}  ${DIM}^G${RESET} ${DIM}help${RESET}  ${DIM}^D${RESET} ${DIM}quit${RESET}`);
     lines.push(`  ${spin} ${DIM}${msg}${RESET}`);
 
   // ── SMALL: brand + desk names only ─────────────────────────────────────
@@ -132,14 +159,14 @@ export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
     lines.push(`  ${DIM}Workers: ${RUNTIME_AGENTS.join(' · ')}${RESET}`);
     lines.push(sep());
 
-    while (lines.length < maxRows - 2) lines.push('');
-    lines.push(`  ${DIM}n query  /model  l load  ? help  q quit${RESET}`);
+    padToStatus(lines, maxRows);
+    lines.push(`  ${DIM}type to ask  /model  ^G help  ^D quit${RESET}`);
     lines.push(`  ${spin} ${DIM}${msg}${RESET}`);
 
   // ── TINY: just brand + spinner ─────────────────────────────────────────
   } else {
     lines.push(`  ${mark}  ${BRAND}${BOLD}MARKED${RESET}`);
-    while (lines.length < maxRows - 1) lines.push('');
+    padToStatus(lines, maxRows, 0);
     lines.push(`  ${spin}  ${DIM}${msg}${RESET}`);
   }
 

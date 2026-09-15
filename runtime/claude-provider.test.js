@@ -11,7 +11,9 @@ describe('claude provider arguments', () => {
 
   it('keeps the isolation flags that work either way', () => {
     const args = claudeArgs({ model: 'opus' }, 'question', {});
-    expect(args.slice(0, 2)).toEqual(['--model', 'opus']);
+    // Position is not the contract — adjacency is. Other flags are free to
+    // precede it.
+    expect(args[args.indexOf('--model') + 1]).toBe('opus');
     for (const flag of ['-p', '--restricted', '--no-session-persistence', '--output-format', '--json-schema']) {
       expect(args).toContain(flag);
     }
@@ -20,5 +22,25 @@ describe('claude provider arguments', () => {
 
   it('omits --model when no model is pinned', () => {
     expect(claudeArgs({}, 'q', {})).not.toContain('--model');
+  });
+});
+
+describe('MCP isolation', () => {
+  // Measured: project MCP servers cost 6.7s of session boot on a call that
+  // calls no tools. The variadic flag order matters — see the comment in
+  // claudeArgs; getting it wrong makes the CLI read the prompt as a config path.
+  it('pins an empty MCP config and forbids any other', () => {
+    const args = claudeArgs({}, 'question');
+    expect(args).toContain('--strict-mcp-config');
+    const i = args.indexOf('--mcp-config');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toMatch(/config[/\\]no-mcp\.json$/);
+  });
+
+  it('never leaves --mcp-config adjacent to the prompt', () => {
+    const args = claudeArgs({}, 'question');
+    expect(args.at(-1)).toBe('question');
+    expect(args.at(-2)).not.toBe('--mcp-config');
+    expect(args.indexOf('--mcp-config')).toBeLessThan(args.length - 2);
   });
 });

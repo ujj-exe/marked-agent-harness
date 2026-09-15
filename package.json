@@ -1,6 +1,6 @@
 {
     "name": "marked-agent-harness",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Marked \u2014 India-first financial research terminal and agent runtime",
     "type": "module",
     "scripts": {
@@ -27,10 +27,10 @@
     ],
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/ujjwalpreenja1308-web/marked-agent-harness.git"
+        "url": "git+https://github.com/ujj-exe/marked-agent-harness.git"
     },
-    "homepage": "https://github.com/ujjwalpreenja1308-web/marked-agent-harness#readme",
-    "bugs": "https://github.com/ujjwalpreenja1308-web/marked-agent-harness/issues",
+    "homepage": "https://github.com/ujj-exe/marked-agent-harness#readme",
+    "bugs": "https://github.com/ujj-exe/marked-agent-harness/issues",
     "license": "AGPL-3.0-only",
     "engines": {
         "node": ">=20"

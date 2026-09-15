@@ -10,6 +10,12 @@ import { plausible } from './screen.js';
 import { planReviewSchema, postflightConcern, reviewPlan } from './plan-review.js';
 import { datasetCatalogue } from '../data/catalogue.js';
 import { selectEquity } from '../data/marked-client.js';
+import { loadSkill } from './skills.js';
+
+/** Thrown when the user abandons a run. Distinct so it is not reported as a failure. */
+export class CancelledError extends Error {
+  constructor() { super('Cancelled'); this.name = 'CancelledError'; this.cancelled = true; }
+}
 
 export class MarkedOrchestrator {
   constructor({ data, agent, tui, cwd = process.cwd(), save = saveSession }) {
@@ -18,17 +24,35 @@ export class MarkedOrchestrator {
     this.tui = tui;
     this.cwd = cwd;
     this.save = save;
+    this.aborted = false;
   }
 
-  async run(question, { asOf = new Date().toISOString(), agentName = this.agent.name, conversation, intentOverride, plan } = {}) {
+  /**
+   * Abandon the run in flight. The agent's own AbortController kills the
+   * reasoning child; this flag stops the retrieval loop, which runs in-process
+   * and has nothing to signal.
+   */
+  abort() {
+    this.aborted = true;
+    this.agent?.cancel?.();
+  }
+
+  async run(question, { asOf = new Date().toISOString(), agentName = this.agent.name, conversation, intentOverride, plan, dataOnly = false, route: routeOverride, pointInTime = false } = {}) {
+    this.aborted = false;
     const session = createSession(question, { agent: agentName, asOf });
     session.conversation_id = conversation?.conversation_id;
     session.history = conversationHistory(conversation);
     session.temporal = resolveTemporal(question, asOf);
-    const state = (stage, extra = {}) => this.tui.render({
-      patch: true,
-      _state: { stage, agent: agentName, query: question, ...extra },
-    });
+    // Every stage transition is an abort checkpoint. Retrieval is a sequence
+    // of awaited fetches with no signal of its own, so this is where a
+    // cancelled run actually stops rather than running to completion unseen.
+    const state = (stage, extra = {}) => {
+      if (this.aborted) throw new CancelledError();
+      return this.tui.render({
+        patch: true,
+        _state: { stage, agent: agentName, query: question, ...extra },
+      });
+    };
 
     await this.tui.render({
       blocks: [{ text: '▐██ MARKED' }, { divider: 'RESEARCH' }],
@@ -39,6 +63,9 @@ export class MarkedOrchestrator {
     const inferredIntent = classifyIntent(question);
     const intent = intentOverride ? { ...inferredIntent, ...intentOverride } : inferredIntent;
     session.intent = intent;
+    // Keep this opt-in until each desk route has packet coverage matching its
+    // procedure. `/risk` is the first seat wired end to end.
+    if (intent.kind === 'risk') session.skill = 'risk';
     // Marked's planner reads the question; the local extractor is the fallback.
     const dataPlan = plan
       ?? await resolvePlan(this.data, question, {
@@ -48,6 +75,7 @@ export class MarkedOrchestrator {
       });
     session.data_plan = dataPlan;
     session.mode = classifyOutputMode(question, intent, dataPlan);
+    if (pointInTime) session.point_in_time = true;
     // A question that names a financial measure is a data-retrieval job, not a
     // search job. It never reaches a reasoning worker on search evidence alone.
     // A prose question about a company that resolved no measure is the case
@@ -64,6 +92,17 @@ export class MarkedOrchestrator {
     if (dataPlan.route === 'screen' && this.data.screen) {
       return this.runScreen(session, dataPlan.screen, { question, asOf, agentName, state, conversation, mode: session.mode });
     }
+    // Risk needs the event, ownership, price and balance-sheet packet together.
+    // The generic planner can legitimately return no concepts for an event
+    // question, which previously left `/risk <company>` with nothing to assess.
+    if (intent.kind === 'risk' && intent.references.length === 1 && this.data.resolveCompany) {
+      const reference = dataPlan.references[0] || intent.references[0];
+      const entity = await this.data.resolveCompany(reference);
+      return this.runCompany(session, entity, {
+        question, asOf, agentName, state, reference, conversation,
+        mode: 'analytical', temporal: session.temporal, route: 'event_research',
+      });
+    }
     const priceOnly = dataPlan.route === 'price_lookup' || dataPlan.datasets?.includes('quote');
     if ((dataPlan.requires_facts || repairable || priceOnly) && this.data.financials && this.data.resolveCompany) {
       return this.runPlanned(session, dataPlan, { question, asOf, agentName, state, conversation, mode: session.mode, temporal: session.temporal });
@@ -78,10 +117,10 @@ export class MarkedOrchestrator {
     // "Reliance" where the legacy regex yields "Reliance's latest filing".
     const reference = dataPlan.references[0] || intent.references[0] || question.trim();
     const entity = await this.data.resolveCompany(reference);
-    return this.runCompany(session, entity, { question, asOf, agentName, state, reference, conversation, mode: session.mode, temporal: session.temporal, route: dataPlan.route });
+    return this.runCompany(session, entity, { question, asOf, agentName, state, reference, conversation, mode: session.mode, temporal: session.temporal, route: routeOverride ?? dataPlan.route, dataOnly, pointInTime });
   }
 
-  async runCompany(session, entity, { question, asOf, agentName, state, reference, conversation, mode, temporal, route = 'factual_lookup' }) {
+  async runCompany(session, entity, { question, asOf, agentName, state, reference, conversation, mode, temporal, route = 'factual_lookup', dataOnly = false, pointInTime = false }) {
     session.entity = entity;
     const security = selectEquity(entity.securities);
     if (!security?.symbol) throw new Error(`No tradable security found for ${reference}`);
@@ -97,7 +136,17 @@ export class MarkedOrchestrator {
     });
 
     let called = 1;
-    const gather = async (label, fn) => {
+    /**
+     * Fetch one dataset and show it.
+     *
+     * `panels` turns a retrieval into the panel it feeds, patched in the moment
+     * the data lands rather than held back until the reasoning provider
+     * returns. The quote and the holdings are known within a second or two; the
+     * verdict takes a minute, and there is no reason to stare at a spinner in
+     * the meantime. Every id here is reused by the final block list, so
+     * `applyPatch` replaces these in place instead of stacking duplicates.
+     */
+    const gather = async (label, fn, panels) => {
       let value;
       try {
         value = await fn();
@@ -105,15 +154,30 @@ export class MarkedOrchestrator {
         value = { data: [], error: error.message };
       }
       called += 1;
+      const blocks = [{ text: `${value.error ? '△' : '✓'} ${label}${value.error ? ' unavailable' : ''}`, id: 'progress' }];
+      if (!value.error && panels) {
+        // A panel builder must never cost us the retrieval: partial data that
+        // does not render is still data the packet needs.
+        try { blocks.push(...panels(value)); } catch { /* keep the tick, drop the panel */ }
+      }
       await this.tui.render({
         patch: true,
-        blocks: [{ text: `${value.error ? '△' : '✓'} ${label}${value.error ? ' unavailable' : ''}`, id: 'progress' }],
+        blocks,
         _state: { stage: 'gathering', agent: agentName, query: question, tools: { called, total: 7, current: label } },
       });
       return value;
     };
+    const chartLabel = `${security.exchange}:${security.symbol}`;
+    const at = pointInTime ? { as_of: asOf } : {};
 
-    const price = await gather('prices loaded', () => this.data.prices({ ticker: security.symbol, exchange: security.exchange || 'NSE', latest: false, limit: 30 }));
+    const price = await gather(
+      'prices loaded',
+      () => this.data.prices({ ticker: security.symbol, exchange: security.exchange || 'NSE', latest: false, limit: 30, ...at }),
+      value => [
+        { panel: 'quote', id: 'quote', data: { ticker: security.symbol, name: entity.company.common_name, price: latestPrice(value), changePct: 0, marketCap: 0 } },
+        { panel: 'chart', id: 'price-chart', data: priceChart(value, chartLabel) },
+      ],
+    );
     const financials = await gather('financials loaded', () => this.data.financials({ ticker: security.symbol, period: 'annual', basis: 'consolidated', as_of: asOf, limit: 200 }));
     const metrics = await gather('metrics loaded', () => this.data.metrics({ ticker: security.symbol, period: 'annual', basis: 'consolidated', as_of: asOf }));
     // A question about a filing or an event is answered by documents. Carrying a
@@ -126,10 +190,18 @@ export class MarkedOrchestrator {
     const years = narrative ? 2 : 5;
     const scopedFinancials = temporal ? scopeFiscalYear(financials, temporal.fiscal_year) : recentFiscalYears(financials, years);
     const scopedMetrics = temporal ? scopeFiscalYear(metrics, temporal.fiscal_year) : recentFiscalYears(metrics, years);
-    const shareholding = await gather('shareholding loaded', () => this.data.shareholding({ ticker: security.symbol, holders: true, limit: 4 }));
-    const filings = await gather('filings loaded', () => this.data.filings({ ticker: security.symbol, limit: 10 }));
-    const actions = await gather('corporate actions loaded', () => this.data.corporateActions({ ticker: security.symbol, limit: 10 }));
-    const events = await gather('events loaded', () => this.data.events({ ticker: security.symbol, limit: 10 }));
+    const shareholding = await gather(
+      'shareholding loaded',
+      () => this.data.shareholding({ ticker: security.symbol, holders: true, limit: 4, ...at }),
+      value => [{ panel: 'holders', id: 'holders', data: holderPanel(value) }],
+    );
+    const filings = await gather(
+      'filings loaded',
+      () => this.data.filings({ ticker: security.symbol, limit: 10, ...at }),
+      value => [{ panel: 'filings', id: 'filings', data: filingPanel(value) }],
+    );
+    const actions = await gather('corporate actions loaded', () => this.data.corporateActions({ ticker: security.symbol, limit: 10, ...at }));
+    const events = await gather('events loaded', () => this.data.events({ ticker: security.symbol, limit: 10, ...at }));
 
     const checked = checkFinancials({ entity, security, financials: scopedFinancials, metrics: scopedMetrics });
     const packet = {
@@ -161,7 +233,7 @@ export class MarkedOrchestrator {
       { table: eventTable(events, actions) },
     ];
     const blocks = narrative ? [...disclosureBlocks, ...financialBlocks.filter(block => block.id !== 'filings')] : financialBlocks;
-    return this.complete(session, { question, asOf, agentName, state, packet, evidence, blocks, totalTools: 7, conversation, mode });
+    return this.complete(session, { question, asOf, agentName, state, packet, evidence, blocks, totalTools: 7, conversation, mode, dataOnly });
   }
 
   async runCompare(session, intent, { question, asOf, agentName, state, conversation, mode }) {
@@ -478,7 +550,10 @@ export class MarkedOrchestrator {
 
     await this.tui.render({
       patch: true,
-      blocks: [{ text: `✓ Screen · ${screen.filters.length} ${screen.filters.length === 1 ? 'filter' : 'filters'} · ${meta.matched ?? companies.length} of ${meta.universe ?? '?'} companies`, id: 'progress' }],
+      blocks: [
+        { text: `✓ Screen · ${screen.filters.length} ${screen.filters.length === 1 ? 'filter' : 'filters'} · ${meta.matched ?? companies.length} of ${meta.universe ?? '?'} companies`, id: 'progress' },
+        ...screenFunnel(screen, meta, companies.length, discarded),
+      ],
       _state: { stage: 'gathering', agent: agentName, query: question, tools: { called: 1, total: 1, current: 'marked.screen' } },
     });
 
@@ -515,14 +590,32 @@ export class MarkedOrchestrator {
         { table: screenTable(companies, screen.filters, screen.sort) },
         ...(notes.length ? [{ text: notes.map(note => `· ${note}`).join('\n') }] : []),
       ],
-      totalTools: 1, conversation, mode: 'screening',
+      // No evidence means there is nothing for a reasoning model to interpret.
+      // The coverage note and compiled filters are the complete answer.
+      totalTools: 1, conversation, mode: 'screening', dataOnly: !companies.length,
     });
   }
 
-  async complete(session, { question, asOf, agentName, state, packet, evidence, blocks, totalTools, conversation, mode = session.mode || 'research' }) {
+  async complete(session, { question, asOf, agentName, state, packet, evidence, blocks, totalTools, conversation, mode = session.mode || 'research', dataOnly = false }) {
     blocks = meaningful(blocks);
     session.packet = packet;
     session.evidence = evidence;
+
+    // A mnemonic asked for a company's state, not for an opinion about it. The
+    // retrieved panels are the whole answer, so stop here: no prompt is built,
+    // no provider is launched, and nothing is spent.
+    if (dataOnly) {
+      await this.tui.render({
+        patch: true,
+        blocks,
+        _state: { stage: 'complete', agent: agentName, query: question, follow_ups: [], tools: { called: totalTools, total: totalTools, current: null } },
+        meta: { as_of: asOf },
+      });
+      session.data_only = true;
+      this.save(session);
+      return session;
+    }
+
     await this.tui.render({
       patch: true,
       blocks,
@@ -539,14 +632,45 @@ export class MarkedOrchestrator {
       requested_as_of: session.requested_as_of,
       conversation: conversationHistory(conversation),
       packet: compactPacket(session.packet),
-      evidence: session.evidence.map(compactEvidence),
+      evidence: compactEvidenceList(session.evidence, session.packet?.financial_facts ?? []),
     };
-    const prompt = `${promptForResult()}\n\nYou are the reasoning engine inside Marked. Analyze the supplied Indian-market research packet. Marked data is canonical. Do not retrieve data or invent facts. Separate facts, inferences, opinions and external context. Use evidence_ids for material factual claims. State consolidated/standalone basis, units and dates. For macro, derivatives or other external coverage, say when the packet is unavailable or secondary. Every number you state must come from packet.financial_facts or packet.derived_metrics and cite that fact's evidence_id; query, search and planning records are context only and can never supply a value. Anything listed in packet.data_gaps is unavailable — say so plainly and do not estimate, interpolate or substitute it. Output mode is ${mode}: factual lookups must answer directly and leave catalysts, risks, bull_case, bear_case and invalidation empty; comparative answers should emphasize differences; analytical and research answers may use the full thesis/catalysts/risks structure; event answers should focus on the event and date; screening answers should focus on matched companies and coverage.\n\n${JSON.stringify(context)}`;
+    const procedure = session.skill ? `\n\nDesk procedure (${session.skill}):\n${loadSkill(session.skill)}` : '';
+    const prompt = `${promptForResult()}\n\nYou are the reasoning engine inside Marked. Analyze the supplied Indian-market research packet. Marked data is canonical. Do not retrieve data or invent facts. Separate facts, inferences, opinions and external context. Use evidence_ids for material factual claims. State consolidated/standalone basis, units and dates. For macro, derivatives or other external coverage, say when the packet is unavailable or secondary. Every number you state must come from packet.financial_facts or packet.derived_metrics and cite that fact's evidence_id; query, search and planning records are context only and can never supply a value. Anything listed in packet.data_gaps is unavailable — say so plainly and do not estimate, interpolate or substitute it. Output mode is ${mode}: factual lookups must answer directly and leave catalysts, risks, bull_case, bear_case and invalidation empty; comparative answers should emphasize differences; analytical and research answers may use the full thesis/catalysts/risks structure; event answers should focus on the event and date; screening answers should focus on matched companies and coverage.${procedure}\n\n${JSON.stringify(context)}`;
     const startedAt = new Date().toISOString();
     session.agent_run = { provider: agentName, started_at: startedAt, status: 'running' };
     let result;
+    let progressRender = Promise.resolve();
+    let lastProgressAt = 0;
+    let lastField = null;
+    const onProgress = progress => {
+      const now = Date.now();
+      const fieldChanged = progress.lastField && progress.lastField !== lastField;
+      if (!fieldChanged && now - lastProgressAt < 250) return;
+      lastProgressAt = now;
+      lastField = progress.lastField;
+      const snapshot = { ...progress, fields: { ...progress.fields } };
+      const panel = snapshot.liveProse ? partialVerdictPanel(snapshot.fields, mode) : null;
+      progressRender = progressRender.then(() => this.tui.render({
+        patch: true,
+        blocks: panel ? [{ panel: 'verdict', id: 'verdict', data: panel }] : [],
+        _state: {
+          stage: 'analyzing', agent: agentName, query: question,
+          progress: {
+            phase: snapshot.phase,
+            elapsedMs: snapshot.elapsedMs,
+            outputTokens: snapshot.outputTokens,
+            targetTokens: snapshot.targetTokens,
+            etaSeconds: snapshot.etaSeconds,
+            lastField: snapshot.lastField,
+            completed: Object.keys(snapshot.fields).filter(key => key !== 'type'),
+          },
+          tools: { called: totalTools, total: totalTools, current: null },
+        },
+      })).catch(() => {});
+    };
     try {
-      result = await this.agent.run(prompt, { cwd: this.cwd, timeoutMs: 180000 });
+      result = await this.agent.run(prompt, { cwd: this.cwd, timeoutMs: 180000, onProgress });
+      await progressRender;
       session.agent_run = { ...session.agent_run, completed_at: new Date().toISOString(), status: 'completed' };
     } catch (error) {
       session.agent_run = { ...session.agent_run, completed_at: new Date().toISOString(), status: 'failed', error: error.message };
@@ -652,6 +776,28 @@ function compactEvidence(item) {
     'evidence_id', 'data_type', 'company_name', 'metric', 'value', 'unit', 'currency',
     'period', 'basis', 'title', 'source_url', 'known_at', 'page', 'section',
   ])(item);
+}
+
+/**
+ * Provenance only, for evidence whose number is already in `financial_facts`.
+ *
+ * A financial fact and its evidence record carried the same metric, value,
+ * unit, period and basis under the same evidence_id — every figure was sent to
+ * the model twice. The fact is the number; the evidence record is where it came
+ * from. Joining them on evidence_id is the model's job and costs it nothing.
+ */
+function compactFactEvidence(item) {
+  return pick(['evidence_id', 'data_type', 'title', 'source_url', 'known_at', 'page', 'section'])(item);
+}
+
+/**
+ * Compact the evidence list against the facts already in the packet, so a
+ * number appears once. Records with no matching fact are untouched: filings,
+ * events and shareholding carry their own content and have nothing to join to.
+ */
+export function compactEvidenceList(evidence = [], facts = []) {
+  const inFacts = new Set(facts.map(fact => fact.evidence_id).filter(Boolean));
+  return evidence.map(item => (inFacts.has(item.evidence_id) ? compactFactEvidence : compactEvidence)(item));
 }
 
 function compactPrices(value) {
@@ -1124,4 +1270,67 @@ function verdictPanel(result, warnings, mode = 'research') {
     timeframe: 'months',
     context: result?.context || 'Marked-backed research; not financial advice.',
   };
+}
+
+/** A stream field is shown only after JSON.parse has proved it complete. */
+function partialVerdictPanel(fields, mode) {
+  const thesis = fields.thesis || fields.summary;
+  if (!thesis) return null;
+  if (['factual', 'event'].includes(mode)) return verdictPanel(fields, [], mode);
+  return {
+    suppressWarnings: true,
+    conviction: ['mixed', 'uncertain'].includes(fields.conviction) ? 'neutral' : fields.conviction,
+    thesis,
+    catalysts: Array.isArray(fields.catalysts) ? fields.catalysts : [],
+    risks: Array.isArray(fields.risks) ? fields.risks : [],
+    levels: Array.isArray(fields.levels) && fields.levels.length ? { support: fields.levels.join(' · ') } : undefined,
+    timeframe: 'months',
+    context: fields.context,
+  };
+}
+
+/**
+ * What the screen cut, and what it kept.
+ *
+ * Marked narrows server-side in one call, so there are no honest per-filter
+ * intermediate counts to show — inventing them would be exactly the kind of
+ * plausible number this product exists to refuse. What is real is the universe,
+ * the matched count, what was withheld as implausible, and the filters
+ * themselves, which is enough to see which constraint did the work.
+ */
+function screenFunnel(screen, meta, shown, discarded) {
+  const universe = meta.universe ?? null;
+  const matched = meta.matched ?? shown;
+  const rows = [
+    { cells: ['universe', universe == null ? 'unreported' : universe.toLocaleString('en-IN')] },
+    { cells: ['matched', matched.toLocaleString('en-IN')] },
+  ];
+  if (discarded > 0) rows.push({ cells: ['shown', `${shown.toLocaleString('en-IN')}  (${discarded} withheld — implausible ratio)`] });
+
+  const scope = [
+    meta.basis ?? screen.basis,
+    meta.fiscal_year ?? screen.fiscal_year,
+    screen.period,
+  ].filter(Boolean).join(' · ');
+
+  return [
+    { divider: 'SCREEN' },
+    ...(scope ? [{ text: scope, id: 'screen-scope' }] : []),
+    { table: { headers: ['stage', 'companies'], rows }, id: 'screen-funnel' },
+    {
+      table: {
+        headers: ['filter', 'test'],
+        rows: screen.filters.map(f => ({ cells: [f.metric, `${f.operator} ${formatThreshold(f.metric, f.value)}`] })),
+      },
+      id: 'screen-filters',
+    },
+  ];
+}
+
+/** Fractional metrics are stored as fractions and read as percentages. */
+function formatThreshold(metric, value) {
+  if (value == null) return '—';
+  return /margin|yield|growth|return|ratio|pct|percent|pledge|promoter|fii|dii|mutual|public|holding/i.test(metric) && Math.abs(value) <= 1
+    ? `${(value * 100).toFixed(1)}%`
+    : String(value);
 }

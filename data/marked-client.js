@@ -74,6 +74,10 @@ export class MarkedClient {
   companies(params = {}, options) { return this.request('/v1/companies', { params, ...options }); }
   instruments(params = {}, options) { return this.request('/v1/instruments', { params, ...options }); }
   prices(params = {}, options) { return this.request('/v1/prices', { params, ...options }); }
+  quote({ symbol, exchange = 'NSE' } = {}, options) {
+    if (!symbol) throw new Error('A quote symbol is required');
+    return this.prices({ ticker: symbol, exchange, latest: true }, options);
+  }
   financials(params = {}, options) { return this.request('/v1/financials', { params, ...options }); }
   metrics(params = {}, options) { return this.request('/v1/financial-metrics', { params, ...options }); }
   shareholding(params = {}, options) { return this.request('/v1/shareholding', { params, ...options }); }

@@ -2,8 +2,8 @@
  * Financial number formatters. Pure functions, zero deps.
  * Follows the plan's number formatting spec.
  */
-import { c, pc } from './ansi.js';
-import { MARKET_GREEN, MARKET_RED } from './themes.js';
+import { c, pc, fg, boldFg } from './ansi.js';
+import { MARKET_GREEN, MARKET_RED, palette } from './themes.js';
 
 const SIGNED_PERCENT_CHANGE_RE = /^\s*([+-])(?=\d|\.\d)(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?%\s*(?:[▲▼])?\s*$/;
 
@@ -115,11 +115,11 @@ export function coloredChange(v, fmt = 2) {
 export function convictionBadge(conviction) {
   if (!conviction) return '';
   switch (conviction) {
-    case 'strong_bull': return '\x1b[1;38;2;0;255;136m[STRONG BULL]\x1b[0m';
-    case 'bull':        return '\x1b[38;2;0;255;136m[BULL]\x1b[0m';
-    case 'neutral':     return '\x1b[38;2;255;170;0m[NEUTRAL]\x1b[0m';
-    case 'bear':        return '\x1b[38;2;255;92;48m[BEAR]\x1b[0m';
-    case 'strong_bear': return '\x1b[1;38;2;255;92;48m[STRONG BEAR]\x1b[0m';
+    case 'strong_bull': return `${boldFg(palette('positive'))}[STRONG BULL]\x1b[0m`;
+    case 'bull':        return `${fg(palette('positive'))}[BULL]\x1b[0m`;
+    case 'neutral':     return `${fg(palette('warning'))}[NEUTRAL]\x1b[0m`;
+    case 'bear':        return `${fg(palette('negative'))}[BEAR]\x1b[0m`;
+    case 'strong_bear': return `${boldFg(palette('negative'))}[STRONG BEAR]\x1b[0m`;
     default:            return pc('muted', `[${String(conviction).toUpperCase()}]`);
   }
 }

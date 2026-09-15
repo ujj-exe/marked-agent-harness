@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DESK, expandDeskCommand, parseDeskCommand, parseModelCommand } from './commands.js';
+import { DESK, expandDeskCommand, parseCapabilityCommand, parseDeskCommand, parseLiveCommand, parseModelCommand } from './commands.js';
 
 describe('desk slash commands', () => {
   it('expands advertised commands into normal research queries', () => {
@@ -80,6 +80,37 @@ describe('/model', () => {
 
   it('refuses a model the chosen provider does not offer', () => {
     expect(parseModelCommand('/model claude gpt-6-astra').error).toMatch(/claude does not offer/);
+  });
+});
+
+describe('power workflow commands', () => {
+  it('parses each workflow without claiming ordinary input', () => {
+    expect(parseCapabilityCommand('/thesis Reliance Industries')).toMatchObject({ kind: 'thesis', reference: 'Reliance Industries' });
+    expect(parseCapabilityCommand('/diff INFY FY25 FY26')).toMatchObject({ kind: 'diff', reference: 'INFY', periods: ['FY2025', 'FY2026'] });
+    expect(parseCapabilityCommand('/rewind PAYTM 2024-03-01')).toMatchObject({ kind: 'rewind', reference: 'PAYTM', date: '2024-03-01' });
+    expect(parseCapabilityCommand('/rewind 2024-03-01 PAYTM')).toMatchObject({ kind: 'rewind', reference: 'PAYTM', date: '2024-03-01' });
+    expect(parseCapabilityCommand('/signal net margin above 10%')).toMatchObject({ kind: 'signal', expression: 'net margin above 10%' });
+    expect(parseCapabilityCommand('/claims Tata Motors')).toMatchObject({ kind: 'claims', reference: 'Tata Motors' });
+    expect(parseCapabilityCommand('Analyze Reliance')).toBeNull();
+    expect(parseCapabilityCommand('/watch Reliance')).toBeNull();
+  });
+
+  it('rejects incomplete workflow commands before retrieval', () => {
+    expect(parseCapabilityCommand('/diff').error).toMatch(/Usage/);
+    expect(parseCapabilityCommand('/rewind PAYTM yesterday').error).toMatch(/YYYY-MM-DD/);
+  });
+});
+
+describe('/live', () => {
+  it('uses the default Indian index tape and accepts a custom list', () => {
+    expect(parseLiveCommand('/live')).toEqual({ symbols: ['NIFTY', 'BANKNIFTY', 'INDIAVIX'], error: null });
+    expect(parseLiveCommand('/live RELIANCE, INFY')).toEqual({ symbols: ['RELIANCE', 'INFY'], error: null });
+    expect(parseLiveCommand('/live off')).toEqual({ symbols: [], error: null });
+  });
+
+  it('rejects malformed or oversized tapes', () => {
+    expect(parseLiveCommand('/live nope!').error).toMatch(/Usage/);
+    expect(parseLiveCommand('/live A B C D E F G H I').error).toMatch(/Usage/);
   });
 });
 

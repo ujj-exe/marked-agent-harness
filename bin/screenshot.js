@@ -14,14 +14,15 @@
  */
 import { renderBlocks } from '../terminal/engine.js';
 import { setTheme } from '../src/index.js';
+import { headerBlock } from '../terminal/header.js';
 import fs from 'fs';
 import path from 'path';
 
 const width = parseInt(process.env.MARKED_SCREENSHOT_WIDTH || '120', 10);
 const outputFile = process.env.MARKED_SCREENSHOT_OUTPUT || null;
 
-// Apply the retained lime theme so colors match the live TUI
-setTheme('marked');
+// Match the live TUI: the app default unless MARKED_THEME overrides it.
+if (process.env.MARKED_THEME) setTheme(process.env.MARKED_THEME);
 
 // ── Demo payload — NVDA analyst deep dive ──────────────────────────────────
 
@@ -40,7 +41,7 @@ if (fs.existsSync(demoPath)) {
 if (!blocks) {
   blocks = [
     {
-      text: '\x1b[38;2;61;122;0m▐\x1b[38;2;127;191;0m█\x1b[38;2;192;255;0m█\x1b[0m \x1b[1m\x1b[38;2;192;255;0mMARKED\x1b[0m · analyst · RELIANCE',
+      text: headerBlock('analyst · RELIANCE').text,
     },
     {
       panel: 'quote',

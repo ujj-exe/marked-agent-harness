@@ -397,13 +397,14 @@ describe('startServer + HTTP endpoints', () => {
   });
 
   it('POST /render reads blocks from file and emits them', async () => {
-    const filePayload = { blocks: [{ text: 'from-file' }], _state: { stage: 'complete' } };
+    const filePayload = { blocks: [{ text: 'from-file' }], _state: { stage: 'complete' }, liveTape: [{ symbol: 'NIFTY', price: 25000 }] };
     const received = await new Promise((resolve) => {
       emitter.once('render', resolve);
       renderViaFile(port, filePayload);
     });
     expect(received.blocks[0].text).toBe('from-file');
     expect(received._state.stage).toBe('complete');
+    expect(received.liveTape[0].symbol).toBe('NIFTY');
   });
 
   // --- Payload size limit ---

@@ -18,6 +18,7 @@ export function configPath(cwd = process.cwd()) {
 export const STATE_DIR = path.join(MARKED_HOME, 'state');
 export const SESSIONS_DIR = path.join(MARKED_HOME, 'sessions');
 export const CONVERSATION_PATH = path.join(MARKED_HOME, 'conversation.json');
+export const CAPABILITIES_PATH = path.join(MARKED_HOME, 'capabilities.json');
 export const ANALYTICS_DIR = path.join(MARKED_HOME, 'analytics');
 export const TUI_STATE_PATH = path.join(MARKED_HOME, 'tui.json');
 export const REPORTS_DIR = path.join(MARKED_HOME, 'reports');

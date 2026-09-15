@@ -27,7 +27,7 @@ function configPath(cwd = process.cwd()) {
     dir = parent;
   }
 }
-var MARKED_HOME, CONFIG_PATH, STATE_DIR, SESSIONS_DIR, CONVERSATION_PATH, ANALYTICS_DIR, TUI_STATE_PATH, REPORTS_DIR;
+var MARKED_HOME, CONFIG_PATH, STATE_DIR, SESSIONS_DIR, CONVERSATION_PATH, CAPABILITIES_PATH, ANALYTICS_DIR, TUI_STATE_PATH, REPORTS_DIR;
 var init_paths = __esm({
   "config/paths.js"() {
     MARKED_HOME = process.env.MARKED_HOME || path.join(os.homedir(), ".marked");
@@ -35,6 +35,7 @@ var init_paths = __esm({
     STATE_DIR = path.join(MARKED_HOME, "state");
     SESSIONS_DIR = path.join(MARKED_HOME, "sessions");
     CONVERSATION_PATH = path.join(MARKED_HOME, "conversation.json");
+    CAPABILITIES_PATH = path.join(MARKED_HOME, "capabilities.json");
     ANALYTICS_DIR = path.join(MARKED_HOME, "analytics");
     TUI_STATE_PATH = path.join(MARKED_HOME, "tui.json");
     REPORTS_DIR = path.join(MARKED_HOME, "reports");
@@ -1060,6 +1061,7 @@ var init_schemas = __esm({
 import fs6 from "fs";
 import path6 from "path";
 import readline from "readline";
+import { pathToFileURL } from "node:url";
 
 // terminal/server.js
 init_paths();
@@ -1070,512 +1072,6 @@ import fs3 from "fs";
 import path3 from "path";
 import { EventEmitter } from "events";
 import { createRequire } from "module";
-var DEFAULT_PORT = 7707;
-var STATE_DIR2 = MARKED_HOME;
-var STATE_FILE = TUI_STATE_PATH;
-var ANALYTICS_FILE = path3.join(ANALYTICS_DIR, "requests.jsonl");
-var ANALYTICS_MAX_BYTES = 5 * 1024 * 1024;
-var VALID_ACTIONS = /* @__PURE__ */ new Set(["render", "focus", "layout", "clear"]);
-var _require = createRequire(import.meta.url);
-function _resolveVersion() {
-  if (true) return "0.1.0";
-  try {
-    return _require("../package.json").version;
-  } catch {
-    return "0.0.0";
-  }
-}
-var VERSION = _resolveVersion();
-var analytics = {
-  renders: 0,
-  patches: 0,
-  errors: 0,
-  totalBlocks: 0,
-  firstRenderAt: null,
-  lastRenderAt: null,
-  skills: {}
-  // { analyst: 3, desk: 1 }
-};
-function logAnalytics(entry) {
-  try {
-    fs3.mkdirSync(ANALYTICS_DIR, { recursive: true });
-    try {
-      const stat = fs3.statSync(ANALYTICS_FILE);
-      if (stat.size > ANALYTICS_MAX_BYTES) {
-        fs3.renameSync(ANALYTICS_FILE, ANALYTICS_FILE + ".bak");
-      }
-    } catch {
-    }
-    fs3.appendFileSync(ANALYTICS_FILE, JSON.stringify(entry) + "\n");
-  } catch {
-  }
-}
-var _agentSession = null;
-var VALID_THEMES = /* @__PURE__ */ new Set([
-  "terminal-cyan",
-  "bloomberg",
-  "monochrome",
-  "solarized-dark",
-  "dracula",
-  "marked"
-]);
-var emitter = new EventEmitter();
-function connectedAgent() {
-  return _agentSession;
-}
-emitter.setMaxListeners(20);
-var _server = null;
-var _handlersRegistered = false;
-var _shuttingDown = false;
-var _port = null;
-var _startedAt = null;
-var _layout = "default";
-var _panelCount = 0;
-function isPortAvailable(port) {
-  return new Promise((resolve) => {
-    const tester = net.createServer();
-    tester.once("error", () => resolve(false));
-    tester.once("listening", () => {
-      tester.close(() => resolve(true));
-    });
-    tester.listen(port, "127.0.0.1");
-  });
-}
-async function findPort() {
-  if (await isPortAvailable(DEFAULT_PORT)) {
-    return DEFAULT_PORT;
-  }
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const candidate = Math.floor(Math.random() * 5e4) + 1e4;
-    if (await isPortAvailable(candidate)) {
-      return candidate;
-    }
-  }
-  throw new Error("Could not find an available port after 5 attempts");
-}
-function writeStateFile(data) {
-  fs3.mkdirSync(STATE_DIR2, { recursive: true });
-  const tmp = STATE_FILE + ".tmp";
-  fs3.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 384 });
-  fs3.renameSync(tmp, STATE_FILE);
-}
-function deleteStateFile() {
-  try {
-    fs3.unlinkSync(STATE_FILE);
-  } catch {
-  }
-}
-function setCorsHeaders(res) {
-  res.setHeader("Access-Control-Allow-Origin", "http://localhost");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-}
-var MAX_BODY_BYTES = 1048576;
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let totalBytes = 0;
-    let limitExceeded = false;
-    req.on("data", (chunk) => {
-      if (limitExceeded) return;
-      totalBytes += chunk.length;
-      if (totalBytes > MAX_BODY_BYTES) {
-        limitExceeded = true;
-        const err = new Error("Payload too large");
-        err.code = "PAYLOAD_TOO_LARGE";
-        reject(err);
-        req.resume();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => {
-      if (limitExceeded) return;
-      const body = Buffer.concat(chunks).toString("utf8");
-      try {
-        resolve(JSON.parse(body));
-      } catch {
-        reject(new Error("Invalid JSON"));
-      }
-    });
-    req.on("error", reject);
-  });
-}
-function handleRequest(req, res) {
-  const _reqStart = Date.now();
-  res.on("finish", () => {
-    try {
-      const duration_ms = Date.now() - _reqStart;
-      const status = res.statusCode;
-      const { method: method2, url: path7 } = req;
-      if (path7 === "/render") {
-        const pending = req._pendingRenderLog || {};
-        logAnalytics({
-          ts: (/* @__PURE__ */ new Date()).toISOString(),
-          method: method2,
-          path: path7,
-          status,
-          duration_ms,
-          ...pending,
-          error: pending.error ?? null
-        });
-        if (status === 200) {
-          const now = (/* @__PURE__ */ new Date()).toISOString();
-          analytics.renders++;
-          if (pending.patch) analytics.patches++;
-          if (pending.blocks_count) analytics.totalBlocks += pending.blocks_count;
-          if (!analytics.firstRenderAt) analytics.firstRenderAt = now;
-          analytics.lastRenderAt = now;
-          if (pending.skill) {
-            if (analytics.skills[pending.skill] !== void 0 || Object.keys(analytics.skills).length < 50) {
-              analytics.skills[pending.skill] = (analytics.skills[pending.skill] || 0) + 1;
-            }
-          }
-          logRender(
-            pending.skill ?? "unknown",
-            pending.blocks_count ?? 0,
-            pending.patch ?? false,
-            pending.stage ?? "unknown"
-          );
-        } else {
-          analytics.errors++;
-          logRenderError(status, pending.error ?? "");
-        }
-      } else {
-        const entry = {
-          ts: (/* @__PURE__ */ new Date()).toISOString(),
-          method: method2,
-          path: path7,
-          status,
-          duration_ms
-        };
-        if (status >= 400) {
-          entry.error = req._responseError || null;
-        }
-        logAnalytics(entry);
-        if (status >= 400) analytics.errors++;
-      }
-    } catch {
-    }
-  });
-  setCorsHeaders(res);
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-  const { method, url } = req;
-  if (method === "GET" && url === "/health") {
-    const now = Date.now();
-    const uptime = _startedAt ? Math.floor((now - _startedAt) / 1e3) : 0;
-    const { columns, rows } = process.stdout;
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({
-      status: "ok",
-      pid: process.pid,
-      port: _port,
-      version: VERSION,
-      uptime,
-      layout: _layout,
-      panelCount: _panelCount,
-      startedAt: _startedAt,
-      width: columns ?? 80,
-      height: rows ?? 24,
-      theme: "marked",
-      capabilities: ["patch", "sections", "focus", "state", "memory", "connect"],
-      agent: _agentSession
-    }));
-    return;
-  }
-  if (method === "POST" && url === "/connect") {
-    readBody(req).then((payload) => {
-      const agentId = payload?.agent || "unknown";
-      if (_agentSession && _agentSession.agent !== agentId) {
-        res.writeHead(409, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          error: "occupied",
-          agent: _agentSession.agent,
-          connectedAt: _agentSession.connectedAt,
-          message: `TUI occupied by ${_agentSession.agent}. Disconnect the active runtime first.`
-        }));
-        return;
-      }
-      const modelId = payload?.model || null;
-      _agentSession = {
-        agent: agentId,
-        model: modelId,
-        query: payload?.query || null,
-        connectedAt: Date.now()
-      };
-      logConnection(agentId, modelId);
-      const label = modelId ? `${agentId} \xB7 ${modelId}` : agentId;
-      emitter.emit("_splash", {
-        msg: `Connected \xB7 ${label}`,
-        agent: _agentSession
-      });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "connected", agent: agentId, model: modelId }));
-    }).catch((err) => {
-      if (err?.code === "PAYLOAD_TOO_LARGE") {
-        res.writeHead(413, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Payload too large", maxBytes: MAX_BODY_BYTES }));
-      } else {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Invalid JSON" }));
-      }
-    });
-    return;
-  }
-  if (method === "POST" && url === "/disconnect") {
-    readBody(req).then((payload) => {
-      const agentId = payload?.agent;
-      if (!agentId) {
-        res.writeHead(403, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Agent ID mismatch" }));
-        return;
-      }
-      if (!_agentSession) {
-        res.writeHead(409, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "No agent connected" }));
-        return;
-      }
-      if (_agentSession.agent !== agentId) {
-        res.writeHead(403, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Agent ID mismatch" }));
-        return;
-      }
-      logDisconnect(agentId);
-      _agentSession = null;
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "disconnected" }));
-    }).catch((err) => {
-      if (err?.code === "PAYLOAD_TOO_LARGE") {
-        res.writeHead(413, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Payload too large", maxBytes: MAX_BODY_BYTES }));
-      } else {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Invalid JSON" }));
-      }
-    });
-    return;
-  }
-  if (method === "POST" && url === "/notice") {
-    readBody(req).then((payload) => {
-      if (!_agentSession || payload?.agent !== _agentSession.agent) {
-        res.writeHead(403, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Agent ID mismatch" }));
-        return;
-      }
-      const message = typeof payload.message === "string" ? payload.message.slice(0, 240) : "";
-      emitter.emit("_splash", { msg: message, reset: payload.reset !== false });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok" }));
-    }).catch(() => {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Invalid JSON" }));
-    });
-    return;
-  }
-  if (method === "POST" && url === "/render") {
-    if (!_agentSession) {
-      req._pendingRenderLog = { error: "No agent connected" };
-      res.writeHead(403, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "No agent connected. POST /connect first." }));
-      return;
-    }
-    readBody(req).then((payload) => {
-      const callerId = payload?.agent;
-      if (callerId && callerId !== _agentSession.agent) {
-        req._pendingRenderLog = { error: "Agent ID mismatch" };
-        res.writeHead(403, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Agent ID mismatch", connected: _agentSession.agent }));
-        return;
-      }
-      const action = payload?.action;
-      if (!VALID_ACTIONS.has(action)) {
-        req._pendingRenderLog = { agent: callerId, error: `Invalid action "${action}"` };
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          error: `Invalid action "${action}". Must be one of: ${[...VALID_ACTIONS].join(", ")}`
-        }));
-        return;
-      }
-      if (action === "render") {
-        if (payload.blocks !== void 0) {
-          req._pendingRenderLog = { agent: callerId, error: "Inline blocks not accepted" };
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({
-            error: 'Inline blocks not accepted. Write blocks to a file and POST {"action":"render","file":"/path/to/file.json"}'
-          }));
-          return;
-        }
-        if (!payload.file) {
-          req._pendingRenderLog = { agent: callerId, error: 'Missing "file" field' };
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({
-            error: 'Missing "file" field. Write blocks to a file and POST {"action":"render","file":"/path/to/file.json"}'
-          }));
-          return;
-        }
-        const filePath = path3.resolve(payload.file);
-        if (!filePath.startsWith("/tmp/")) {
-          req._pendingRenderLog = { agent: callerId, error: "File path must be under /tmp/" };
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({
-            error: "File path must be under /tmp/. Got: " + filePath
-          }));
-          return;
-        }
-        let fileContents;
-        try {
-          const stat = fs3.statSync(filePath);
-          if (stat.size > MAX_BODY_BYTES) {
-            req._pendingRenderLog = { agent: callerId, error: "File too large" };
-            res.writeHead(413, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "File too large", maxBytes: MAX_BODY_BYTES }));
-            return;
-          }
-          fileContents = fs3.readFileSync(filePath, "utf8");
-        } catch (readErr) {
-          if (readErr.code === "ENOENT") {
-            req._pendingRenderLog = { agent: callerId, error: `File not found: ${filePath}` };
-            res.writeHead(404, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: `File not found: ${filePath}` }));
-          } else {
-            req._pendingRenderLog = { agent: callerId, error: `Could not read file: ${readErr.message}` };
-            res.writeHead(500, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: `Could not read file: ${readErr.message}` }));
-          }
-          return;
-        }
-        let filePayload;
-        try {
-          filePayload = JSON.parse(fileContents);
-        } catch {
-          req._pendingRenderLog = { agent: callerId, error: `Invalid JSON in file: ${filePath}` };
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: `Invalid JSON in file: ${filePath}` }));
-          return;
-        }
-        if (filePayload.blocks !== void 0) payload.blocks = filePayload.blocks;
-        if (filePayload._state !== void 0) payload._state = filePayload._state;
-        if (filePayload.meta !== void 0) payload.meta = filePayload.meta;
-        if (filePayload.theme !== void 0) payload.theme = filePayload.theme;
-        if (filePayload.patch !== void 0) payload.patch = filePayload.patch;
-        if (filePayload.layout !== void 0) payload.layout = filePayload.layout;
-        if (filePayload.panels !== void 0) payload.panels = filePayload.panels;
-      }
-      if (payload.theme !== void 0 && !VALID_THEMES.has(payload.theme)) {
-        req._pendingRenderLog = { agent: payload.agent, error: `Unknown theme "${payload.theme}"` };
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          error: `Unknown theme "${payload.theme}". Valid: ${[...VALID_THEMES].join(", ")}`
-        }));
-        return;
-      }
-      if (payload.layout) _layout = payload.layout;
-      if (Array.isArray(payload.blocks)) _layout = "blocks";
-      if (typeof payload.panelCount === "number") _panelCount = payload.panelCount;
-      try {
-        emitter.emit(action, payload);
-      } catch (emitErr) {
-        req._pendingRenderLog = {
-          agent: payload.agent,
-          skill: payload._state?.skill,
-          action,
-          error: `Render error: ${emitErr.message}`
-        };
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: `Render error: ${emitErr.message}` }));
-        return;
-      }
-      if (action === "render") {
-        req._pendingRenderLog = {
-          skill: payload._state?.skill ?? payload.meta?.skill ?? "unknown",
-          blocks_count: Array.isArray(payload.blocks) ? payload.blocks.length : 0,
-          patch: !!payload.patch,
-          stage: payload._state?.stage ?? "unknown"
-        };
-      }
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true }));
-    }).catch((err) => {
-      if (err?.code === "PAYLOAD_TOO_LARGE") {
-        req._pendingRenderLog = { error: "Payload too large" };
-        res.writeHead(413, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Payload too large", maxBytes: MAX_BODY_BYTES }));
-      } else {
-        req._pendingRenderLog = { error: "Invalid JSON in request body" };
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Invalid JSON in request body" }));
-      }
-    });
-    return;
-  }
-  if (method === "GET" && url === "/stats") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(analytics));
-    return;
-  }
-  req._responseError = "Not found";
-  res.writeHead(404, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ error: "Not found" }));
-}
-async function startServer(overridePort) {
-  const requestedPort = overridePort != null ? overridePort : await findPort();
-  _startedAt = Date.now();
-  const server = http.createServer(handleRequest);
-  _server = server;
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(requestedPort, "127.0.0.1", () => resolve());
-  });
-  const port = server.address().port;
-  _port = port;
-  writeStateFile({
-    pid: process.pid,
-    port,
-    startedAt: new Date(_startedAt).toISOString(),
-    version: VERSION
-  });
-  logAnalytics({
-    ts: (/* @__PURE__ */ new Date()).toISOString(),
-    event: "server_start",
-    port,
-    version: VERSION,
-    pid: process.pid
-  });
-  if (!_handlersRegistered) {
-    process.on("SIGTERM", shutdown);
-    process.on("SIGINT", shutdown);
-    _handlersRegistered = true;
-  }
-  return { server, port };
-}
-function shutdown() {
-  if (_shuttingDown) return;
-  _shuttingDown = true;
-  logAnalytics({
-    ts: (/* @__PURE__ */ new Date()).toISOString(),
-    event: "server_stop",
-    duration_s: _startedAt ? Math.floor((Date.now() - _startedAt) / 1e3) : 0,
-    renders: analytics.renders,
-    errors: analytics.errors
-  });
-  deleteStateFile();
-  if (_server) {
-    if (typeof _server.closeAllConnections === "function") {
-      _server.closeAllConnections();
-    }
-    _server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 3e3).unref();
-  } else {
-    process.exit(0);
-  }
-}
-
-// terminal/app.js
-init_debugLog();
 
 // src/themes.js
 var MARKET_GREEN = "#72C66B";
@@ -1652,11 +1148,29 @@ var themes = {
     highlight: "#6100FF",
     chartHigh: "#C0FF00",
     chartLow: "#374EFF"
+  },
+  // Muted violet on purple-black. Market green/red are kept close to the
+  // house values so direction never reads as decoration, and chartLow is a
+  // deep violet so gradients stay in-family instead of falling back to grey.
+  "marked-violet": {
+    accent: "#A189E8",
+    positive: "#72C66B",
+    negative: "#E7775A",
+    warning: "#E8B44A",
+    data: "#E8E4F2",
+    label: "#7C6BB0",
+    muted: "#5A5270",
+    highlight: "#C9B6FF",
+    chartHigh: "#A189E8",
+    chartLow: "#3A2E5C"
   }
 };
-var activeTheme = "marked";
+var activeTheme = "marked-violet";
 function setTheme(name) {
   if (themes[name]) activeTheme = name;
+}
+function getTheme() {
+  return activeTheme;
 }
 function palette(role) {
   return themes[activeTheme]?.[role] ?? "";
@@ -1678,6 +1192,18 @@ function hexToRgb(hex) {
 function fg(hex) {
   const [r, g, b] = hexToRgb(hex);
   return `${ESC}38;2;${r};${g};${b}m`;
+}
+function boldFg(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  return `${ESC}1;38;2;${r};${g};${b}m`;
+}
+function shade(hex, amount) {
+  const mix = (c2) => {
+    const v = amount <= 1 ? c2 * amount : c2 + (255 - c2) * (amount - 1);
+    return Math.max(0, Math.min(255, Math.round(v)));
+  };
+  const [r, g, b] = hexToRgb(hex).map(mix);
+  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 function c(hexOrCode, text) {
   if (!hexOrCode) return String(text);
@@ -1872,15 +1398,15 @@ function convictionBadge(conviction) {
   if (!conviction) return "";
   switch (conviction) {
     case "strong_bull":
-      return "\x1B[1;38;2;0;255;136m[STRONG BULL]\x1B[0m";
+      return `${boldFg(palette("positive"))}[STRONG BULL]\x1B[0m`;
     case "bull":
-      return "\x1B[38;2;0;255;136m[BULL]\x1B[0m";
+      return `${fg(palette("positive"))}[BULL]\x1B[0m`;
     case "neutral":
-      return "\x1B[38;2;255;170;0m[NEUTRAL]\x1B[0m";
+      return `${fg(palette("warning"))}[NEUTRAL]\x1B[0m`;
     case "bear":
-      return "\x1B[38;2;255;92;48m[BEAR]\x1B[0m";
+      return `${fg(palette("negative"))}[BEAR]\x1B[0m`;
     case "strong_bear":
-      return "\x1B[1;38;2;255;92;48m[STRONG BEAR]\x1B[0m";
+      return `${boldFg(palette("negative"))}[STRONG BEAR]\x1B[0m`;
     default:
       return pc("muted", `[${String(conviction).toUpperCase()}]`);
   }
@@ -3654,12 +3180,514 @@ function filingTimeline(opts = {}) {
   return lines.join("\n");
 }
 
+// terminal/server.js
+var DEFAULT_PORT = 7707;
+var STATE_DIR2 = MARKED_HOME;
+var STATE_FILE = TUI_STATE_PATH;
+var ANALYTICS_FILE = path3.join(ANALYTICS_DIR, "requests.jsonl");
+var ANALYTICS_MAX_BYTES = 5 * 1024 * 1024;
+var VALID_ACTIONS = /* @__PURE__ */ new Set(["render", "focus", "layout", "clear"]);
+var _require = createRequire(import.meta.url);
+function _resolveVersion() {
+  if (true) return "0.2.0";
+  try {
+    return _require("../package.json").version;
+  } catch {
+    return "0.0.0";
+  }
+}
+var VERSION = _resolveVersion();
+var analytics = {
+  renders: 0,
+  patches: 0,
+  errors: 0,
+  totalBlocks: 0,
+  firstRenderAt: null,
+  lastRenderAt: null,
+  skills: {}
+  // { analyst: 3, desk: 1 }
+};
+function logAnalytics(entry) {
+  try {
+    fs3.mkdirSync(ANALYTICS_DIR, { recursive: true });
+    try {
+      const stat = fs3.statSync(ANALYTICS_FILE);
+      if (stat.size > ANALYTICS_MAX_BYTES) {
+        fs3.renameSync(ANALYTICS_FILE, ANALYTICS_FILE + ".bak");
+      }
+    } catch {
+    }
+    fs3.appendFileSync(ANALYTICS_FILE, JSON.stringify(entry) + "\n");
+  } catch {
+  }
+}
+var _agentSession = null;
+var VALID_THEMES = new Set(Object.keys(themes));
+var emitter = new EventEmitter();
+function connectedAgent() {
+  return _agentSession;
+}
+emitter.setMaxListeners(20);
+var _server = null;
+var _handlersRegistered = false;
+var _shuttingDown = false;
+var _port = null;
+var _startedAt = null;
+var _layout = "default";
+var _panelCount = 0;
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const tester = net.createServer();
+    tester.once("error", () => resolve(false));
+    tester.once("listening", () => {
+      tester.close(() => resolve(true));
+    });
+    tester.listen(port, "127.0.0.1");
+  });
+}
+async function findPort() {
+  if (await isPortAvailable(DEFAULT_PORT)) {
+    return DEFAULT_PORT;
+  }
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const candidate = Math.floor(Math.random() * 5e4) + 1e4;
+    if (await isPortAvailable(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error("Could not find an available port after 5 attempts");
+}
+function writeStateFile(data) {
+  fs3.mkdirSync(STATE_DIR2, { recursive: true });
+  const tmp = STATE_FILE + ".tmp";
+  fs3.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 384 });
+  fs3.renameSync(tmp, STATE_FILE);
+}
+function deleteStateFile() {
+  try {
+    fs3.unlinkSync(STATE_FILE);
+  } catch {
+  }
+}
+function setCorsHeaders(res) {
+  res.setHeader("Access-Control-Allow-Origin", "http://localhost");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+var MAX_BODY_BYTES = 1048576;
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+    let limitExceeded = false;
+    req.on("data", (chunk) => {
+      if (limitExceeded) return;
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_BODY_BYTES) {
+        limitExceeded = true;
+        const err = new Error("Payload too large");
+        err.code = "PAYLOAD_TOO_LARGE";
+        reject(err);
+        req.resume();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (limitExceeded) return;
+      const body = Buffer.concat(chunks).toString("utf8");
+      try {
+        resolve(JSON.parse(body));
+      } catch {
+        reject(new Error("Invalid JSON"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+function handleRequest(req, res) {
+  const _reqStart = Date.now();
+  res.on("finish", () => {
+    try {
+      const duration_ms = Date.now() - _reqStart;
+      const status = res.statusCode;
+      const { method: method2, url: path7 } = req;
+      if (path7 === "/render") {
+        const pending = req._pendingRenderLog || {};
+        logAnalytics({
+          ts: (/* @__PURE__ */ new Date()).toISOString(),
+          method: method2,
+          path: path7,
+          status,
+          duration_ms,
+          ...pending,
+          error: pending.error ?? null
+        });
+        if (status === 200) {
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          analytics.renders++;
+          if (pending.patch) analytics.patches++;
+          if (pending.blocks_count) analytics.totalBlocks += pending.blocks_count;
+          if (!analytics.firstRenderAt) analytics.firstRenderAt = now;
+          analytics.lastRenderAt = now;
+          if (pending.skill) {
+            if (analytics.skills[pending.skill] !== void 0 || Object.keys(analytics.skills).length < 50) {
+              analytics.skills[pending.skill] = (analytics.skills[pending.skill] || 0) + 1;
+            }
+          }
+          logRender(
+            pending.skill ?? "unknown",
+            pending.blocks_count ?? 0,
+            pending.patch ?? false,
+            pending.stage ?? "unknown"
+          );
+        } else {
+          analytics.errors++;
+          logRenderError(status, pending.error ?? "");
+        }
+      } else {
+        const entry = {
+          ts: (/* @__PURE__ */ new Date()).toISOString(),
+          method: method2,
+          path: path7,
+          status,
+          duration_ms
+        };
+        if (status >= 400) {
+          entry.error = req._responseError || null;
+        }
+        logAnalytics(entry);
+        if (status >= 400) analytics.errors++;
+      }
+    } catch {
+    }
+  });
+  setCorsHeaders(res);
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+  const { method, url } = req;
+  if (method === "GET" && url === "/health") {
+    const now = Date.now();
+    const uptime = _startedAt ? Math.floor((now - _startedAt) / 1e3) : 0;
+    const { columns, rows } = process.stdout;
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      status: "ok",
+      pid: process.pid,
+      port: _port,
+      version: VERSION,
+      uptime,
+      layout: _layout,
+      panelCount: _panelCount,
+      startedAt: _startedAt,
+      width: columns ?? 80,
+      height: rows ?? 24,
+      theme: getTheme(),
+      capabilities: ["patch", "sections", "focus", "state", "memory", "connect"],
+      agent: _agentSession
+    }));
+    return;
+  }
+  if (method === "POST" && url === "/connect") {
+    readBody(req).then((payload) => {
+      const agentId = payload?.agent || "unknown";
+      if (_agentSession && _agentSession.agent !== agentId) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          error: "occupied",
+          agent: _agentSession.agent,
+          connectedAt: _agentSession.connectedAt,
+          message: `TUI occupied by ${_agentSession.agent}. Disconnect the active runtime first.`
+        }));
+        return;
+      }
+      const modelId = payload?.model || null;
+      _agentSession = {
+        agent: agentId,
+        model: modelId,
+        query: payload?.query || null,
+        connectedAt: Date.now()
+      };
+      logConnection(agentId, modelId);
+      const label = modelId ? `${agentId} \xB7 ${modelId}` : agentId;
+      emitter.emit("_splash", {
+        msg: `Connected \xB7 ${label}`,
+        agent: _agentSession
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "connected", agent: agentId, model: modelId }));
+    }).catch((err) => {
+      if (err?.code === "PAYLOAD_TOO_LARGE") {
+        res.writeHead(413, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Payload too large", maxBytes: MAX_BODY_BYTES }));
+      } else {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON" }));
+      }
+    });
+    return;
+  }
+  if (method === "POST" && url === "/disconnect") {
+    readBody(req).then((payload) => {
+      const agentId = payload?.agent;
+      if (!agentId) {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Agent ID mismatch" }));
+        return;
+      }
+      if (!_agentSession) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "No agent connected" }));
+        return;
+      }
+      if (_agentSession.agent !== agentId) {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Agent ID mismatch" }));
+        return;
+      }
+      logDisconnect(agentId);
+      _agentSession = null;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "disconnected" }));
+    }).catch((err) => {
+      if (err?.code === "PAYLOAD_TOO_LARGE") {
+        res.writeHead(413, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Payload too large", maxBytes: MAX_BODY_BYTES }));
+      } else {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON" }));
+      }
+    });
+    return;
+  }
+  if (method === "POST" && url === "/notice") {
+    readBody(req).then((payload) => {
+      if (!_agentSession || payload?.agent !== _agentSession.agent) {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Agent ID mismatch" }));
+        return;
+      }
+      const message = typeof payload.message === "string" ? payload.message.slice(0, 240) : "";
+      emitter.emit("_splash", { msg: message, reset: payload.reset !== false });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok" }));
+    }).catch(() => {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid JSON" }));
+    });
+    return;
+  }
+  if (method === "POST" && url === "/render") {
+    if (!_agentSession) {
+      req._pendingRenderLog = { error: "No agent connected" };
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "No agent connected. POST /connect first." }));
+      return;
+    }
+    readBody(req).then((payload) => {
+      const callerId = payload?.agent;
+      if (callerId && callerId !== _agentSession.agent) {
+        req._pendingRenderLog = { error: "Agent ID mismatch" };
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Agent ID mismatch", connected: _agentSession.agent }));
+        return;
+      }
+      const action = payload?.action;
+      if (!VALID_ACTIONS.has(action)) {
+        req._pendingRenderLog = { agent: callerId, error: `Invalid action "${action}"` };
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          error: `Invalid action "${action}". Must be one of: ${[...VALID_ACTIONS].join(", ")}`
+        }));
+        return;
+      }
+      if (action === "render") {
+        if (payload.blocks !== void 0) {
+          req._pendingRenderLog = { agent: callerId, error: "Inline blocks not accepted" };
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            error: 'Inline blocks not accepted. Write blocks to a file and POST {"action":"render","file":"/path/to/file.json"}'
+          }));
+          return;
+        }
+        if (!payload.file) {
+          req._pendingRenderLog = { agent: callerId, error: 'Missing "file" field' };
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            error: 'Missing "file" field. Write blocks to a file and POST {"action":"render","file":"/path/to/file.json"}'
+          }));
+          return;
+        }
+        const filePath = path3.resolve(payload.file);
+        if (!filePath.startsWith("/tmp/")) {
+          req._pendingRenderLog = { agent: callerId, error: "File path must be under /tmp/" };
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            error: "File path must be under /tmp/. Got: " + filePath
+          }));
+          return;
+        }
+        let fileContents;
+        try {
+          const stat = fs3.statSync(filePath);
+          if (stat.size > MAX_BODY_BYTES) {
+            req._pendingRenderLog = { agent: callerId, error: "File too large" };
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "File too large", maxBytes: MAX_BODY_BYTES }));
+            return;
+          }
+          fileContents = fs3.readFileSync(filePath, "utf8");
+        } catch (readErr) {
+          if (readErr.code === "ENOENT") {
+            req._pendingRenderLog = { agent: callerId, error: `File not found: ${filePath}` };
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: `File not found: ${filePath}` }));
+          } else {
+            req._pendingRenderLog = { agent: callerId, error: `Could not read file: ${readErr.message}` };
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: `Could not read file: ${readErr.message}` }));
+          }
+          return;
+        }
+        let filePayload;
+        try {
+          filePayload = JSON.parse(fileContents);
+        } catch {
+          req._pendingRenderLog = { agent: callerId, error: `Invalid JSON in file: ${filePath}` };
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `Invalid JSON in file: ${filePath}` }));
+          return;
+        }
+        if (filePayload.blocks !== void 0) payload.blocks = filePayload.blocks;
+        if (filePayload._state !== void 0) payload._state = filePayload._state;
+        if (filePayload.meta !== void 0) payload.meta = filePayload.meta;
+        if (filePayload.theme !== void 0) payload.theme = filePayload.theme;
+        if (filePayload.patch !== void 0) payload.patch = filePayload.patch;
+        if (filePayload.layout !== void 0) payload.layout = filePayload.layout;
+        if (filePayload.panels !== void 0) payload.panels = filePayload.panels;
+        if (filePayload.liveTape !== void 0) payload.liveTape = filePayload.liveTape;
+      }
+      if (payload.theme !== void 0 && !VALID_THEMES.has(payload.theme)) {
+        req._pendingRenderLog = { agent: payload.agent, error: `Unknown theme "${payload.theme}"` };
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          error: `Unknown theme "${payload.theme}". Valid: ${[...VALID_THEMES].join(", ")}`
+        }));
+        return;
+      }
+      if (payload.layout) _layout = payload.layout;
+      if (Array.isArray(payload.blocks)) _layout = "blocks";
+      if (typeof payload.panelCount === "number") _panelCount = payload.panelCount;
+      try {
+        emitter.emit(action, payload);
+      } catch (emitErr) {
+        req._pendingRenderLog = {
+          agent: payload.agent,
+          skill: payload._state?.skill,
+          action,
+          error: `Render error: ${emitErr.message}`
+        };
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `Render error: ${emitErr.message}` }));
+        return;
+      }
+      if (action === "render") {
+        req._pendingRenderLog = {
+          skill: payload._state?.skill ?? payload.meta?.skill ?? "unknown",
+          blocks_count: Array.isArray(payload.blocks) ? payload.blocks.length : 0,
+          patch: !!payload.patch,
+          stage: payload._state?.stage ?? "unknown"
+        };
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    }).catch((err) => {
+      if (err?.code === "PAYLOAD_TOO_LARGE") {
+        req._pendingRenderLog = { error: "Payload too large" };
+        res.writeHead(413, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Payload too large", maxBytes: MAX_BODY_BYTES }));
+      } else {
+        req._pendingRenderLog = { error: "Invalid JSON in request body" };
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON in request body" }));
+      }
+    });
+    return;
+  }
+  if (method === "GET" && url === "/stats") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(analytics));
+    return;
+  }
+  req._responseError = "Not found";
+  res.writeHead(404, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Not found" }));
+}
+async function startServer(overridePort) {
+  const requestedPort = overridePort != null ? overridePort : await findPort();
+  _startedAt = Date.now();
+  const server = http.createServer(handleRequest);
+  _server = server;
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(requestedPort, "127.0.0.1", () => resolve());
+  });
+  const port = server.address().port;
+  _port = port;
+  writeStateFile({
+    pid: process.pid,
+    port,
+    startedAt: new Date(_startedAt).toISOString(),
+    version: VERSION
+  });
+  logAnalytics({
+    ts: (/* @__PURE__ */ new Date()).toISOString(),
+    event: "server_start",
+    port,
+    version: VERSION,
+    pid: process.pid
+  });
+  if (!_handlersRegistered) {
+    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
+    _handlersRegistered = true;
+  }
+  return { server, port };
+}
+function shutdown() {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  logAnalytics({
+    ts: (/* @__PURE__ */ new Date()).toISOString(),
+    event: "server_stop",
+    duration_s: _startedAt ? Math.floor((Date.now() - _startedAt) / 1e3) : 0,
+    renders: analytics.renders,
+    errors: analytics.errors
+  });
+  deleteStateFile();
+  if (_server) {
+    if (typeof _server.closeAllConnections === "function") {
+      _server.closeAllConnections();
+    }
+    _server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3e3).unref();
+  } else {
+    process.exit(0);
+  }
+}
+
+// terminal/app.js
+init_debugLog();
+
 // terminal/state.js
 init_paths();
 import { createRequire as createRequire2 } from "module";
 var _require2 = createRequire2(import.meta.url);
 function _resolveVersion2() {
-  if (true) return "0.1.0";
+  if (true) return "0.2.0";
   try {
     return _require2("../package.json").version;
   } catch {
@@ -3667,13 +3695,25 @@ function _resolveVersion2() {
   }
 }
 var PKG_VERSION = "v" + _resolveVersion2();
-var BRAND = "\x1B[38;2;192;255;0m";
-var LABEL = "\x1B[38;2;55;78;255m";
+var BRAND = "";
+var LABEL = "";
 var BOLD2 = "\x1B[1m";
 var DIM2 = "\x1B[2m";
 var RESET2 = "\x1B[0m";
-var LIME_D = "\x1B[38;2;61;122;0m";
-var LIME_M = "\x1B[38;2;127;191;0m";
+var LIME_D = "";
+var LIME_M = "";
+function refreshBrand() {
+  const accent = palette("accent") || "#ffffff";
+  BRAND = fg(accent);
+  LABEL = fg(palette("label") || accent);
+  LIME_D = fg(shade(accent, 0.38));
+  LIME_M = fg(shade(accent, 0.68));
+}
+function applyTheme(name) {
+  setTheme(name);
+  refreshBrand();
+}
+refreshBrand();
 var VERSION2 = { current: PKG_VERSION };
 var PANEL_NAMES_SET = /* @__PURE__ */ new Set([
   "quote",
@@ -3730,6 +3770,7 @@ var tui = {
   modelCurrent: null,
   // Agent→TUI state protocol (#15)
   agentState: null,
+  liveTape: [],
   // Focus state (#3 TUI Controls)
   focusedPanel: null,
   // panel name currently focused (null = none)
@@ -3738,7 +3779,10 @@ var tui = {
   // Help overlay
   helpVisible: false,
   // Runtime query prompt
-  queryInput: null
+  queryInput: "",
+  overlayBackdrop: null,
+  queryHistory: [],
+  historyIdx: -1
 };
 function getBlockType(block) {
   if (!block || typeof block !== "object") return null;
@@ -3782,18 +3826,22 @@ function applyPatch(base, incoming) {
 }
 
 // terminal/logo.js
-var BRAND2 = "\x1B[38;2;192;255;0m";
-var LIME_D2 = "\x1B[38;2;100;180;0m";
-var LIME_M2 = "\x1B[38;2;155;220;0m";
 var BOLD3 = "\x1B[1m";
 var DIM3 = "\x1B[2m";
 var RESET3 = "\x1B[0m";
-var LOGO_B = [
-  `${LIME_D2}  \u2590${RESET3} ${LIME_M2}\u2590\u258C${RESET3} ${BRAND2}\u2588${RESET3}   ${BRAND2}${BOLD3}MARKED${RESET3}`,
-  `${LIME_D2}  \u2588${RESET3} ${LIME_M2}\u2588\u2588${RESET3} ${BRAND2}\u2588${RESET3}   ${BRAND2}${BOLD3}INDIA${RESET3}`,
-  `${LIME_M2}  \u2588${RESET3} ${BRAND2}\u2588\u2588${RESET3} ${LIME_D2}\u2590${RESET3}`,
-  `${BRAND2}  \u2590${RESET3} ${LIME_D2}\u2590\u258C${RESET3} ${LIME_M2}\u2590${RESET3}   ${DIM3}The view that matters.${RESET3}`
-];
+function ramp() {
+  const accent = palette("accent") || "#ffffff";
+  return { BRAND: fg(accent), LIME_M: fg(shade(accent, 0.78)), LIME_D: fg(shade(accent, 0.5)) };
+}
+function logoBlock() {
+  const { BRAND: BRAND2, LIME_M: LIME_M2, LIME_D: LIME_D2 } = ramp();
+  return [
+    `${LIME_D2}  \u2590${RESET3} ${LIME_M2}\u2590\u258C${RESET3} ${BRAND2}\u2588${RESET3}   ${BRAND2}${BOLD3}MARKED${RESET3}`,
+    `${LIME_D2}  \u2588${RESET3} ${LIME_M2}\u2588\u2588${RESET3} ${BRAND2}\u2588${RESET3}   ${BRAND2}${BOLD3}INDIA${RESET3}`,
+    `${LIME_M2}  \u2588${RESET3} ${BRAND2}\u2588\u2588${RESET3} ${LIME_D2}\u2590${RESET3}`,
+    `${BRAND2}  \u2590${RESET3} ${LIME_D2}\u2590\u258C${RESET3} ${LIME_M2}\u2590${RESET3}   ${DIM3}The view that matters.${RESET3}`
+  ];
+}
 var WORDMARK_ROWS = [
   "\u2588\u2588\u2588\u2557   \u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2557  \u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2557 ",
   "\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551 \u2588\u2588\u2554\u255D\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255D\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557",
@@ -3803,7 +3851,10 @@ var WORDMARK_ROWS = [
   "\u255A\u2550\u255D     \u255A\u2550\u255D\u255A\u2550\u255D  \u255A\u2550\u255D\u255A\u2550\u255D  \u255A\u2550\u255D\u255A\u2550\u255D  \u255A\u2550\u255D\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u255D\u255A\u2550\u2550\u2550\u2550\u2550\u255D "
 ];
 var WORDMARK_WIDTH = WORDMARK_ROWS[0].length;
-var WORDMARK = WORDMARK_ROWS.map((row) => row.replace(/\u2588+|[^\u2588 ]+/g, (run) => (run[0] === "\u2588" ? BRAND2 + BOLD3 : LIME_D2) + run + RESET3));
+function wordmark() {
+  const { BRAND: BRAND2, LIME_D: LIME_D2 } = ramp();
+  return WORDMARK_ROWS.map((row) => row.replace(/\u2588+|[^\u2588 ]+/g, (run) => (run[0] === "\u2588" ? BRAND2 + BOLD3 : LIME_D2) + run + RESET3));
+}
 
 // config/models.js
 init_paths();
@@ -3869,22 +3920,39 @@ var DESK = [
   ["/futures", "<symbol>", "commodities, rates futures, the cross-asset tape"],
   ["/watch", "<companies>", "what moved, conviction logged"]
 ];
+var CAPABILITIES = [
+  ["/thesis", "<company>", "save or re-evaluate a living thesis"],
+  ["/diff", "<company> [FYx FYy]", "changes since the last check or between two years"],
+  ["/rewind", "<company> <YYYY-MM-DD>", "research using only that point in time"],
+  ["/signal", "<screen rules>", "compile natural language into a universe screen"],
+  ["/claims", "<company>", "test management narrative against reported facts"]
+];
+var LIVE = ["/live", "<symbols>", "poll live API quotes in a compact tape"];
 var COMMANDS = new Set(DESK.map(([name]) => name.slice(1)));
 
 // terminal/splash.js
-var PULSE_COLORS = [
-  "\x1B[38;2;192;255;0m",
-  "\x1B[38;2;215;255;40m",
-  "\x1B[38;2;240;255;90m",
-  "\x1B[38;2;215;255;40m",
-  "\x1B[38;2;192;255;0m",
-  "\x1B[38;2;155;210;0m",
-  "\x1B[38;2;192;255;0m"
-];
+function pulseColors() {
+  const accent = palette("accent") || "#ffffff";
+  return [
+    fg(accent),
+    fg(shade(accent, 1.18)),
+    fg(shade(accent, 1.38)),
+    fg(shade(accent, 1.18)),
+    fg(accent),
+    fg(shade(accent, 0.72)),
+    fg(accent)
+  ];
+}
 var SPINNER_FRAMES = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
 var RUNTIME_AGENTS = ["marked", "claude", "codex", "openai-codex"];
-function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
-  const pc2 = PULSE_COLORS[pulseFrame % PULSE_COLORS.length];
+var BOTTOM_ROWS = 2;
+function padToStatus(lines, maxRows, gap = 1) {
+  const target = Math.min(maxRows - BOTTOM_ROWS, lines.length + gap);
+  while (lines.length < target) lines.push("");
+}
+function renderSplash(msg, width, pulseFrame = 0, maxRows = 999, liveTape = []) {
+  const pulse = pulseColors();
+  const pc2 = pulse[pulseFrame % pulse.length];
   const mark = `${pc2}${BOLD2}\u2590\u2588\u2588${RESET2}`;
   const spin = `${pc2}${SPINNER_FRAMES[pulseFrame % SPINNER_FRAMES.length]}${RESET2}`;
   const vStr = `${BRAND}${VERSION2.current}${RESET2}`;
@@ -3902,11 +3970,11 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
   if (width >= 82 && maxRows >= 22) {
     lines.push("");
     if (width >= WORDMARK_WIDTH + 4 && maxRows >= 26) {
-      for (const row of WORDMARK) lines.push(`  ${row}`);
+      for (const row of wordmark()) lines.push(`  ${row}`);
       lines.push("");
       lines.push(`  ${DIM2}INDIA  \xB7  The view that matters.${RESET2}`);
     } else {
-      for (const row of LOGO_B) lines.push(`  ${row}`);
+      for (const row of logoBlock()) lines.push(`  ${row}`);
     }
     lines.push(sep());
     lines.push("");
@@ -3920,10 +3988,18 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
       `  ${DIM2}${"\u2500".repeat(colW - 2)}${RESET2}`,
       `${DIM2}${"\u2500".repeat(runtimeW)}${RESET2}  `
     ));
+    const tapeLines = liveTape.slice(0, 2).map((quote) => {
+      const price = Number(quote.price);
+      const change = Number(quote.change_percent);
+      const priceText = Number.isFinite(price) ? price.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "\u2014";
+      const changeText = Number.isFinite(change) ? `${change > 0 ? "+" : ""}${change.toFixed(2)}%` : "\u2014";
+      return `  ${LABEL}${quote.symbol || "\u2014"}${RESET2} ${DIM2}${priceText} ${changeText}${quote.is_stale ? " STALE" : ""}${RESET2}`;
+    });
     const runtimeLines = [
       ...RUNTIME_AGENTS.map((a) => `  ${BRAND}\u25CF${RESET2} ${DIM2}${a.padEnd(8)}${RESET2} ${DIM2}connected${RESET2}`),
       "",
-      `  ${vStr}`
+      `  ${vStr}`,
+      ...tapeLines.length ? [`  ${LABEL}LIVE TAPE${RESET2}`, ...tapeLines] : [`  ${DIM2}LIVE TAPE \xB7 /live to connect${RESET2}`]
     ];
     DESK.forEach(([name, arg, desc], i) => {
       const command = `${BRAND}${BOLD2}${name}${RESET2}${arg ? ` ${LABEL}${arg}${RESET2}` : ""}`;
@@ -3934,8 +4010,8 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
     });
     lines.push("");
     lines.push(sep());
-    while (lines.length < maxRows - 2) lines.push("");
-    lines.push(`  ${DIM2}n${RESET2} ${DIM2}query${RESET2}  ${DIM2}/model${RESET2}  ${DIM2}l${RESET2} ${DIM2}load${RESET2}  ${DIM2}?${RESET2} ${DIM2}help${RESET2}  ${DIM2}q${RESET2} ${DIM2}quit${RESET2}`);
+    padToStatus(lines, maxRows);
+    lines.push(`  ${DIM2}type a company or a question${RESET2}  ${DIM2}\xB7${RESET2}  ${DIM2}/model${RESET2}  ${DIM2}^O${RESET2} ${DIM2}load${RESET2}  ${DIM2}^G${RESET2} ${DIM2}help${RESET2}  ${DIM2}^D${RESET2} ${DIM2}quit${RESET2}`);
     lines.push(L(
       `  ${spin} ${DIM2}${msg}${RESET2}`,
       `${DIM2}marked.run  \xB7  ${RESET2}${mark}  `
@@ -3951,8 +4027,8 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
     });
     lines.push(`  ${DIM2}Workers: ${RUNTIME_AGENTS.join(" \xB7 ")}${RESET2}`);
     lines.push(sep());
-    while (lines.length < maxRows - 2) lines.push("");
-    lines.push(`  ${DIM2}n${RESET2} ${DIM2}query${RESET2}  ${DIM2}/model${RESET2}  ${DIM2}l${RESET2} ${DIM2}load${RESET2}  ${DIM2}?${RESET2} ${DIM2}help${RESET2}  ${DIM2}q${RESET2} ${DIM2}quit${RESET2}`);
+    padToStatus(lines, maxRows);
+    lines.push(`  ${DIM2}type a company or a question${RESET2}  ${DIM2}\xB7${RESET2}  ${DIM2}/model${RESET2}  ${DIM2}^O${RESET2} ${DIM2}load${RESET2}  ${DIM2}^G${RESET2} ${DIM2}help${RESET2}  ${DIM2}^D${RESET2} ${DIM2}quit${RESET2}`);
     lines.push(`  ${spin} ${DIM2}${msg}${RESET2}`);
   } else if (maxRows >= 10) {
     lines.push(`  ${mark}  ${BRAND}${BOLD2}MARKED${RESET2}  ${DIM2}The view that matters.${RESET2}`);
@@ -3961,12 +4037,12 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999) {
     lines.push(`  ${deskNames}`);
     lines.push(`  ${DIM2}Workers: ${RUNTIME_AGENTS.join(" \xB7 ")}${RESET2}`);
     lines.push(sep());
-    while (lines.length < maxRows - 2) lines.push("");
-    lines.push(`  ${DIM2}n query  /model  l load  ? help  q quit${RESET2}`);
+    padToStatus(lines, maxRows);
+    lines.push(`  ${DIM2}type to ask  /model  ^G help  ^D quit${RESET2}`);
     lines.push(`  ${spin} ${DIM2}${msg}${RESET2}`);
   } else {
     lines.push(`  ${mark}  ${BRAND}${BOLD2}MARKED${RESET2}`);
-    while (lines.length < maxRows - 1) lines.push("");
+    padToStatus(lines, maxRows, 0);
     lines.push(`  ${spin}  ${DIM2}${msg}${RESET2}`);
   }
   return lines.join("\n");
@@ -4667,13 +4743,14 @@ function buildHeader(width) {
   let left = `  ${gradMark} ${title}`;
   if (s?.skill) left += `${sep}${LABEL}:${s.skill}${RESET2}`;
   if (s?.query) left += `${sep}${BRAND}${s.query}${RESET2}`;
+  left = ansiTrunc(left, Math.max(0, width));
   const fillLen = Math.max(0, width - visLen(left));
   return left + `${DIM2}${"\u2500".repeat(fillLen)}${RESET2}`;
 }
 function renderHelpOverlay(width) {
   const rows = process.stdout.rows ?? 24;
   if (rows < 12) {
-    return `${DIM2}n query  \u2191\u2193 scroll  Tab focus  s save  l load  ? close  q quit${RESET2}`;
+    return `${DIM2}type to ask  \u23CE send  ^C cancel  PgUp/Dn scroll  ^S save  ^G close  ^D quit${RESET2}`;
   }
   const sep = `${DIM2}${"\u2500".repeat(width)}${RESET2}`;
   const K = (key, desc) => `  ${BRAND}${key.padEnd(26)}${RESET2}${DIM2}${desc}${RESET2}`;
@@ -4682,38 +4759,48 @@ function renderHelpOverlay(width) {
     `  ${BRAND}${BOLD2}MARKED${RESET2}  ${DIM2}Keyboard Reference${RESET2}`,
     sep,
     "",
+    `  ${BRAND}${BOLD2}COMMAND LINE${RESET2}`,
+    K("(just type)", "The prompt is always open \u2014 no key opens it"),
+    K("Enter", "Ask"),
+    K("\u2191 \u2193", "Previous / next question"),
+    K("Ctrl+C", "Cancel the running query, else clear the line"),
+    K("Ctrl+U", "Clear the line"),
+    K("Ctrl+D", "Quit (empty line only)"),
+    "",
+    `  ${BRAND}${BOLD2}FAST PATH${RESET2}  ${DIM2}data only \u2014 no reasoning model, no spend${RESET2}`,
+    K("RELIANCE", "A company, straight to its panels"),
+    K("FA <company>", "Financial profile"),
+    K("GP <company>", "Price history"),
+    K("OWN <company>", "Promoter, FII, DII, pledge"),
+    K("ANR <company>", "Announcements and filings"),
+    K("CACS <company>", "Corporate actions and events"),
+    "",
     `  ${BRAND}${BOLD2}NAVIGATION${RESET2}`,
-    K("\u2191\u2193  /  j k", "Scroll up / down"),
     K("PgUp  PgDn", "Scroll one page"),
-    K("Space", "Page down"),
-    K("g", "Jump to top"),
-    K("G", "Jump to bottom"),
-    K("Tab", "Next panel"),
-    K("Shift+Tab", "Previous panel"),
+    K("Ctrl+\u2191  Ctrl+\u2193", "Scroll one line"),
+    K("Home  End", "Jump to top / bottom"),
+    K("Tab  Shift+Tab", "Next / previous panel"),
     "",
     `  ${BRAND}${BOLD2}ACTIONS${RESET2}`,
-    K("s", "Save report to ~/.marked/reports/"),
-    K("l", "Load a saved report"),
-    K("n", "Ask a new research question"),
+    K("Ctrl+S  /save", "Save report to ~/.marked/reports/"),
+    K("Ctrl+O  /load", "Load a saved report"),
+    K("Ctrl+G  /help", "Toggle this help"),
+    K("/reset", "Return to splash (runtime stays connected)"),
+    K("/quit", "Quit the terminal"),
     K("/marked <key>", "Save the Marked API key"),
     K("/history", "Show saved conversation turns"),
+    K(`${LIVE[0]} ${LIVE[1]}`, LIVE[2]),
     K("/new", "Start a fresh conversation"),
     K("/model", "Pick the reasoning provider and model"),
     K("/model claude opus", "Set provider and model without the picker"),
-    K("1-9", "Run a follow-up query"),
+    K("/1 \u2026 /9", "Run a follow-up query"),
     "",
     `  ${BRAND}${BOLD2}THE TEAM${RESET2}`,
     ...DESK.map(([name, arg, desc]) => K(`${name}${arg ? ` ${arg}` : ""}`, desc)),
     "",
-    `  ${BRAND}${BOLD2}DISPLAY${RESET2}`,
-    K("?", "Toggle this help"),
-    K("Esc", "Close help / return to splash"),
-    K("q", "Return to splash (agent stays connected)"),
+    `  ${BRAND}${BOLD2}POWER WORKFLOWS${RESET2}`,
+    ...CAPABILITIES.map(([name, arg, desc]) => K(`${name} ${arg}`, desc)),
     "",
-    `  ${BRAND}${BOLD2}SPLASH SCREEN${RESET2}`,
-    K("Enter", "Restore last dashboard"),
-    K("l", "Load a saved report"),
-    K("q", "Quit terminal"),
     sep,
     `  ${DIM2}Marked runtime owns credentials, data and reasoning.${RESET2}`
   ];
@@ -4721,11 +4808,13 @@ function renderHelpOverlay(width) {
 }
 var DESK_COMMANDS = /* @__PURE__ */ new Set([
   ...DESK.map(([name]) => name.slice(1)),
+  ...CAPABILITIES.map(([name]) => name.slice(1)),
   "marked",
   "model",
   "new",
   "history",
-  "help"
+  "help",
+  "live"
 ]);
 function highlightCommand(value) {
   const match = String(value).match(/^\/([a-z]+)(\b[\s\S]*)?$/i);
@@ -4736,6 +4825,14 @@ function renderQueryOverlay(width, value = "") {
   const displayValue = /^\/marked\s+\S+$/.test(value) ? value.replace(/^(\/marked\s+)\S+$/, (_match, prefix) => `${prefix}${"\u2022".repeat(value.length - prefix.length)}`) : value;
   const field = `${LABEL} query ${RESET2}${BRAND}\u203A${RESET2} ${highlightCommand(displayValue)}${BRAND}\u2588${RESET2}`;
   return ansiTrunc(field, Math.max(1, width - 1));
+}
+function renderPromptRow(width, value = "") {
+  const s = tui.agentState;
+  const running = s && (s.stage === "gathering" || s.stage === "analyzing" || s.stage === "resolving");
+  const hint = running ? `${DIM2}^C cancel${RESET2}` : value ? `${DIM2}\u23CE ask  ^C clear${RESET2}` : `${DIM2}/help  ^D quit${RESET2}`;
+  const field = renderQueryOverlay(Math.max(1, width - visLen(hint) - 3), value);
+  const gap = Math.max(1, width - visLen(field) - visLen(hint) - 1);
+  return field + " ".repeat(gap) + hint;
 }
 function runLayout(layoutOrBlocks, panels, width, focused) {
   try {
@@ -4748,6 +4845,11 @@ function runLayout(layoutOrBlocks, panels, width, focused) {
     return `${DIM2}\u26A0 Render error: ${err.message}${RESET2}`;
   }
 }
+function fitSides(left, right, width) {
+  if (visLen(right) >= width) return ansiTrunc(right, Math.max(0, width));
+  left = ansiTrunc(left, Math.max(0, width - visLen(right) - 1));
+  return left + " ".repeat(Math.max(1, width - visLen(left) - visLen(right))) + right;
+}
 function buildFooter(width) {
   const m = tui.renderMeta;
   const s = tui.agentState;
@@ -4756,9 +4858,11 @@ function buildFooter(width) {
   const sep = `${DIM2} \xB7 ${RESET2}`;
   if (s && (s.stage === "gathering" || s.stage === "analyzing")) {
     const spin = `${BRAND}${SPINNER_FRAMES[_spinnerTick % SPINNER_FRAMES.length]}${RESET2}`;
+    const progress = s.progress;
+    const label = progress?.phase === "writing" ? "Writing" : s.stage === "gathering" ? "Gathering" : "Analyzing";
     const parts = [
       `  ${gradMark} ${spin}`,
-      s.stage === "gathering" ? `${DIM2}Gathering${RESET2}` : `${DIM2}Analyzing${RESET2}`
+      `${DIM2}${label}${RESET2}`
     ];
     if (s.skill) parts.push(`${LABEL}:${s.skill}${RESET2}`);
     if (s.query) parts.push(`${BRAND}${s.query}${RESET2}`);
@@ -4767,12 +4871,18 @@ function buildFooter(width) {
       parts.push(`${DIM2}${called ?? 0}/${total ?? "?"}${RESET2}`);
       if (current) parts.push(`${DIM2}${current}${RESET2}`);
     }
+    if (progress?.phase === "thinking") parts.push(`${DIM2}${(progress.elapsedMs / 1e3).toFixed(1)}s${RESET2}`);
+    if (progress?.phase === "writing") {
+      if (progress.completed?.length) parts.push(`${LABEL}${progress.completed.slice(-2).join(", ")}${RESET2}`);
+      const width2 = 8;
+      const filled = Math.min(width2, Math.floor(width2 * (progress.outputTokens || 0) / (progress.targetTokens || 1)));
+      parts.push(`${BRAND}${"\u2588".repeat(filled)}${DIM2}${"\u2591".repeat(width2 - filled)}${RESET2}`);
+      parts.push(`${DIM2}~${(progress.outputTokens || 0).toLocaleString("en-IN")} tok${RESET2}`);
+      if (progress.etaSeconds != null) parts.push(`${DIM2}~${progress.etaSeconds}s left${RESET2}`);
+    }
     const left2 = parts.join(` ${DIM2}\xB7${RESET2} `);
-    const keys2 = `${DIM2}n new query  \u2191\u2193 scroll  q quit${RESET2}`;
-    const leftVis2 = visLen(left2);
-    const rightVis2 = visLen(keys2);
-    const gap2 = Math.max(2, width - leftVis2 - rightVis2);
-    return left2 + " ".repeat(gap2) + keys2;
+    const keys2 = `${DIM2}^C cancel  PgUp/Dn scroll${RESET2}`;
+    return fitSides(left2, keys2, width);
   }
   const toolsCalled = tui.agentState?.tools?.called;
   const costStr = m.cost ? `${DIM2}~${m.cost}${RESET2}` : toolsCalled != null ? `${DIM2}${estimateCost(toolsCalled)}${RESET2}` : null;
@@ -4789,14 +4899,11 @@ function buildFooter(width) {
   const left = `  ${gradMark} ${meshLabel}` + (meta ? `${sep}${meta}` : "");
   let keys;
   if (s?.stage === "complete" && s?.follow_ups?.length > 0) {
-    keys = `${DIM2}n new query  1-${s.follow_ups.length} drill  \u2191\u2193 scroll  s save  q quit${RESET2}`;
+    keys = `${DIM2}/1-/${s.follow_ups.length} drill  PgUp/Dn scroll  ^S save  ^G help${RESET2}`;
   } else {
-    keys = `${DIM2}n new query  \u2191\u2193 scroll  s save  l load  q quit${RESET2}`;
+    keys = `${DIM2}PgUp/Dn scroll  ^S save  ^O load  ^G help  ^D quit${RESET2}`;
   }
-  const leftVis = visLen(left);
-  const rightVis = visLen(keys);
-  const gap = Math.max(2, width - leftVis - rightVis);
-  return left + " ".repeat(gap) + keys;
+  return fitSides(left, keys, width);
 }
 function renderLoadOverlay(width) {
   const lines = [];
@@ -4852,6 +4959,10 @@ function renderModelOverlay(width) {
   lines.push("");
   lines.push(`  ${BRAND}\u2590${RESET2}${DIM2} Marked${RESET2}  ${LABEL}Reasoning Model${RESET2}`);
   lines.push(`  ${DIM2}\u2191\u2193 navigate \xB7 Enter select \xB7 Esc cancel${RESET2}`);
+  const stage = tui.agentState?.stage;
+  if (stage === "resolving" || stage === "gathering" || stage === "analyzing") {
+    lines.push(`  ${palette("warning") ? fg(palette("warning")) : ""}a query is running \u2014 this applies to the next one, or ^C to cancel it first${RESET2}`);
+  }
   lines.push("");
   if (tui.modelList.length === 0) {
     lines.push(`  ${DIM2}No reasoning providers available${RESET2}`);
@@ -4887,6 +4998,11 @@ function applyShimmer(content) {
   });
 }
 var _animTimer = null;
+function footerRow(totalLines, rows) {
+  const rowsForContent = rows - 1;
+  if (totalLines <= rowsForContent) return totalLines;
+  return rows - 2;
+}
 function startRenderAnimation() {
   stopRenderAnimation();
   const tick = () => {
@@ -4906,11 +5022,7 @@ function startRenderAnimation() {
     const totalLines = allLines.length;
     const footer = buildFooter(w);
     const padded = footer + " ".repeat(Math.max(0, w - visLen(footer)));
-    if (totalLines <= rows) {
-      process.stdout.write(`\x1B[${totalLines};1H${padded}`);
-    } else {
-      process.stdout.write(`\x1B[${rows - 1};1H${padded}`);
-    }
+    process.stdout.write(`\x1B[${footerRow(totalLines, rows)};1H${padded}`);
     _animTimer = setTimeout(tick, 110);
   };
   _animTimer = setTimeout(tick, 110);
@@ -4927,9 +5039,9 @@ function buildActionBar(width) {
   const lines = [];
   lines.push(`${DIM2}\u2504\u2504 WHAT'S NEXT ${"\u2504".repeat(Math.max(0, width - 18))}${RESET2}`);
   for (const f of s.follow_ups) {
-    lines.push(`  ${BRAND}${f.key}${RESET2}  ${DIM2}${f.label}${RESET2}`);
+    lines.push(`  ${BRAND}/${f.key}${RESET2}  ${DIM2}${f.label}${RESET2}`);
   }
-  lines.push(`  ${DIM2}q${RESET2}  ${DIM2}Done \u2014 return to Marked runtime${RESET2}`);
+  lines.push(`  ${DIM2}/reset${RESET2}  ${DIM2}Done \u2014 return to Marked runtime${RESET2}`);
   lines.push(`${DIM2}${"\u2500".repeat(width)}${RESET2}`);
   return lines.join("\n");
 }
@@ -4966,22 +5078,25 @@ function paintWithScroll(clear = true) {
   const totalLines = allLines.length;
   allLines[0] = buildHeader(w);
   displayContent = allLines.join("\n");
-  if (totalLines <= rows) {
+  const promptRow = renderPromptRow(w, tui.queryInput ?? "");
+  const rowsForContent = rows - 1;
+  if (totalLines <= rowsForContent) {
     if (clear) {
-      process.stdout.write("\x1B[2J\x1B[H" + displayContent);
+      process.stdout.write("\x1B[2J\x1B[H" + displayContent + `\x1B[${rows};1H\x1B[2K` + promptRow);
     } else {
       const padded = allLines.map((l) => l + " ".repeat(Math.max(0, w - visLen(l)))).join("\n");
       process.stdout.write("\x1B[H" + padded);
-      for (let r = totalLines + 1; r <= rows; r++) {
+      for (let r = totalLines + 1; r < rows; r++) {
         process.stdout.write(`\x1B[${r};1H\x1B[2K`);
       }
+      process.stdout.write(`\x1B[${rows};1H\x1B[2K` + promptRow);
     }
     return;
   }
   const stickyLine = allLines[0];
   const bodyLines = allLines.slice(1, allLines.length - 1);
   const footerLine = allLines[allLines.length - 1];
-  const bodyRows = rows - 3;
+  const bodyRows = rows - 4;
   const maxOffset = Math.max(0, bodyLines.length - bodyRows);
   tui.scrollOffset = Math.max(0, Math.min(tui.scrollOffset, maxOffset));
   const offset = tui.scrollOffset;
@@ -4991,7 +5106,7 @@ function paintWithScroll(clear = true) {
   const pct = maxOffset > 0 ? Math.round(offset / maxOffset * 100) : 0;
   const indicator = `${DIM2}` + (atTop ? " " : " \u25B2 ") + `${offset + 1}\u2013${Math.min(offset + viewLines.length, bodyLines.length)}/${bodyLines.length}` + (atBottom ? "" : " \u25BC") + ` ${atBottom ? "END" : pct + "%"}  \u2191\u2193/jk scroll  PgUp/Dn  g top  G end${RESET2}`;
   const safeHeader = visLen(stickyLine) > w ? ansiTrunc(stickyLine, w) : stickyLine;
-  const allOutput = [safeHeader, ...viewLines, footerLine, indicator];
+  const allOutput = [safeHeader, ...viewLines, footerLine, indicator, promptRow];
   let buf = "\x1B[2J";
   for (let r = 0; r < allOutput.length; r++) {
     const line = allOutput[r];
@@ -5010,9 +5125,6 @@ function paintWithScroll(clear = true) {
 var _mouseInputActive = false;
 var _lastEscapeMs = 0;
 var _mouseReportMs = 0;
-function isMouseRecent() {
-  return Date.now() - _lastEscapeMs < 300;
-}
 function isMouseSequenceActive() {
   return Date.now() - _mouseReportMs < 50;
 }
@@ -5100,6 +5212,9 @@ tui.panels = {};
 tui.blocks = null;
 tui.focused = null;
 tui.isPatch = false;
+tui.queryInput = "";
+tui.queryHistory = [];
+tui.historyIdx = -1;
 function repaint() {
   if (tui.phase === "splash") return;
   if (tui.loadMode || tui.modelMode || tui.askMode) return;
@@ -5118,17 +5233,14 @@ function openAsk(ask) {
   tui.phase = "live";
   stopSplashAnimation();
   const overlay = renderAskOverlay(getWidth());
-  tui.lastContent = overlay;
-  process.stdout.write("\x1B[2J\x1B[H" + overlay);
+  showOverlay(overlay);
 }
 function closeAsk() {
   tui.askMode = false;
   tui.askList = [];
   tui.askStep = null;
-  if (tui.lastBlocks) return paintWithScroll();
-  stopSplashAnimation();
-  tui.phase = "splash";
-  startSplashAnimation();
+  hideOverlay();
+  paintOrSplash();
 }
 function openInput(input) {
   tui.inputPrompt = input.prompt || "Enter a value";
@@ -5154,6 +5266,13 @@ function closeInput() {
   process.stdout.write("\x1B[?25l");
 }
 function onRender(payload) {
+  if (Array.isArray(payload.liveTape)) {
+    tui.liveTape = payload.liveTape;
+    if (tui.phase === "splash") {
+      startSplashAnimation();
+      return;
+    }
+  }
   if (tui.phase === "splash") {
     process.stdout.write("\x1B[2J\x1B[H");
   }
@@ -5213,7 +5332,7 @@ function onRender(payload) {
     tui.panels = { ...tui.panels, ...payload.panels };
   }
   if (payload.theme) {
-    setTheme(payload.theme);
+    applyTheme(payload.theme);
   }
   repaint();
 }
@@ -5237,46 +5356,101 @@ function onSplash(payload) {
     tui.phase = "splash";
     tui.lastContent = "";
     tui.blocks = null;
-    tui.queryInput = null;
+    tui.queryInput = "";
+    tui.liveTape = [];
   }
   tui.splashMsg = payload?.msg ?? "";
   if (payload?.agent) tui.agentState = { ...tui.agentState, ...payload.agent };
   if (tui.phase === "splash") startSplashAnimation();
 }
-function showQueryInput() {
-  if (tui.agentState?.stage === "gathering" || tui.agentState?.stage === "analyzing") return;
-  stopSplashAnimation();
-  setMouseReporting(false);
+function drawQueryPrompt() {
+  process.stdout.write(`\x1B[${getHeight()};1H\x1B[2K${renderPromptRow(getWidth(), tui.queryInput)}`);
+}
+function clearPrompt() {
   tui.queryInput = "";
-  if (tui.phase === "splash") {
-    process.stdout.write("\x1B[2J\x1B[H" + renderSplash(tui.splashMsg, getWidth(), 0, getHeight()));
+  tui.historyIdx = -1;
+  drawQueryPrompt();
+}
+function recallHistory(delta) {
+  const h = tui.queryHistory;
+  if (!h.length) return;
+  const next = tui.historyIdx + delta;
+  if (next < 0) {
+    tui.historyIdx = -1;
+    tui.queryInput = "";
+  } else if (next >= h.length) return;
+  else {
+    tui.historyIdx = next;
+    tui.queryInput = h[h.length - 1 - next];
   }
   drawQueryPrompt();
 }
-function cancelQueryInput() {
-  setMouseReporting(true);
-  tui.queryInput = null;
-  process.stdout.write("\x1B[?25l");
-  if (tui.phase === "splash") startSplashAnimation();
-  else paintWithScroll();
-}
-function drawQueryPrompt() {
-  const row = tui.phase === "splash" ? Math.max(1, getHeight() - 1) : getHeight();
-  process.stdout.write(`\x1B[${row};1H\x1B[2K${renderQueryOverlay(getWidth(), tui.queryInput)}\x1B[?25h`);
-}
 async function sendRuntimeQuery(question) {
-  process.stdout.write("\x1B[?25l");
-  tui.phase = "splash";
-  tui.lastContent = "";
-  tui.splashMsg = "Sending query to Marked runtime";
-  startSplashAnimation();
+  if (tui.lastContent) {
+    tui.agentState = { ...tui.agentState, stage: "resolving", query: question };
+    paintWithScroll();
+  } else {
+    tui.phase = "splash";
+    tui.splashMsg = "Sending query to Marked runtime";
+    startSplashAnimation();
+  }
   try {
     await submitQuery(question);
   } catch (error) {
-    tui.queryInput = null;
-    tui.splashMsg = `Query unavailable \xB7 ${error.message}`;
-    startSplashAnimation();
+    if (tui.lastContent) {
+      tui.agentState = { ...tui.agentState, stage: "complete" };
+      paintWithScroll();
+    } else {
+      tui.splashMsg = `Query unavailable \xB7 ${error.message}`;
+      startSplashAnimation();
+    }
   }
+}
+function showOverlay(overlay) {
+  if (tui.overlayBackdrop == null) tui.overlayBackdrop = tui.lastContent;
+  tui.lastContent = overlay;
+  process.stdout.write("\x1B[2J\x1B[H" + overlay);
+}
+function hideOverlay() {
+  if (tui.overlayBackdrop != null) {
+    tui.lastContent = tui.overlayBackdrop;
+    tui.overlayBackdrop = null;
+  }
+}
+function closeAnyOverlay() {
+  if (tui.modelMode) {
+    closeModelPicker();
+    return true;
+  }
+  if (tui.loadMode) {
+    tui.loadMode = false;
+    hideOverlay();
+    paintOrSplash();
+    return true;
+  }
+  if (tui.helpVisible) {
+    toggleHelp();
+    return true;
+  }
+  if (tui.askMode) {
+    submitQuery("/pick cancel").catch(() => {
+    });
+    closeAsk();
+    return true;
+  }
+  if (tui.inputMode) {
+    closeInput();
+    submitQuery("/input cancel").catch(() => {
+    });
+    return true;
+  }
+  return false;
+}
+function paintOrSplash() {
+  if (tui.lastContent) return paintWithScroll();
+  stopSplashAnimation();
+  tui.phase = "splash";
+  startSplashAnimation();
 }
 function openModelPicker() {
   tui.modelCurrent = currentModel();
@@ -5285,26 +5459,54 @@ function openModelPicker() {
   tui.modelMode = true;
   tui.phase = "live";
   const overlay = renderModelOverlay(getWidth());
-  tui.lastContent = overlay;
-  process.stdout.write("\x1B[2J\x1B[H" + overlay);
+  showOverlay(overlay);
 }
 function closeModelPicker() {
   tui.modelMode = false;
-  if (tui.lastBlocks) return paintWithScroll();
-  stopSplashAnimation();
-  tui.phase = "splash";
-  startSplashAnimation();
+  hideOverlay();
+  paintOrSplash();
+}
+function runLocalCommand(text) {
+  const cmd = text.toLowerCase();
+  if (cmd === "/model") {
+    openModelPicker();
+    return true;
+  }
+  if (cmd === "/help") {
+    toggleHelp();
+    return true;
+  }
+  if (cmd === "/save") {
+    saveCurrentReport();
+    return true;
+  }
+  if (cmd === "/load") {
+    openLoadPicker();
+    return true;
+  }
+  if (cmd === "/reset") {
+    resetToSplash();
+    return true;
+  }
+  if (cmd === "/quit" || cmd === "/exit") {
+    quitApp();
+    return true;
+  }
+  return false;
+}
+function expandFollowUp(text) {
+  const match = text.match(/^\/([1-9])$/);
+  if (!match) return null;
+  const fu = tui.agentState?.follow_ups?.find((f) => f.key === match[1]);
+  return fu?.question ?? null;
 }
 async function sendQueryInput() {
-  setMouseReporting(true);
   const question = tui.queryInput.trim();
-  tui.queryInput = null;
-  if (!question) return cancelQueryInput();
-  if (/^\/model$/i.test(question)) {
-    cancelQueryInput();
-    return openModelPicker();
-  }
-  await sendRuntimeQuery(question);
+  if (!question) return;
+  tui.queryHistory.push(question);
+  clearPrompt();
+  if (runLocalCommand(question)) return;
+  await sendRuntimeQuery(expandFollowUp(question) ?? question);
 }
 function onLive() {
   tui.phase = "live";
@@ -5326,7 +5528,7 @@ function startSplashAnimation() {
   stopSplashAnimation();
   const width = getWidth();
   const termRows = getHeight();
-  const allLines = renderSplash(tui.splashMsg, width, 0, termRows).split("\n");
+  const allLines = renderSplash(tui.splashMsg, width, 0, termRows - 1, tui.liveTape).split("\n");
   let revealCount = 0;
   let pulseFrame = 0;
   const spinnerSet = new Set(SPINNER_FRAMES);
@@ -5354,9 +5556,11 @@ function startSplashAnimation() {
     if (revealCount <= contentEnd) {
       process.stdout.write("\x1B[2J\x1B[H" + allLines.slice(0, revealCount).join("\n"));
       process.stdout.write(`\x1B[${spinnerIdx + 1};1H${allLines[spinnerIdx]}`);
+      drawQueryPrompt();
     } else {
       revealCount = allLines.length;
       process.stdout.write("\x1B[2J\x1B[H" + allLines.join("\n"));
+      drawQueryPrompt();
     }
     if (revealCount >= allLines.length) {
       clearInterval(_splashRevealTimer);
@@ -5369,21 +5573,89 @@ function startSplashAnimation() {
         pulseFrame++;
         const currentWidth = getWidth();
         const currentRows = getHeight();
-        const newLines = renderSplash(tui.splashMsg, currentWidth, pulseFrame, currentRows).split("\n");
+        const newLines = renderSplash(tui.splashMsg, currentWidth, pulseFrame, currentRows - 1, tui.liveTape).split("\n");
         for (const i of animLineIndices) {
-          if (i >= currentRows) continue;
+          if (i >= currentRows - 1) continue;
           process.stdout.write(`\x1B[${i + 1};1H\x1B[2K${newLines[i] ?? ""}`);
         }
+        drawQueryPrompt();
       }, 110);
     }
   }, 16);
 }
+function toggleHelp() {
+  tui.helpVisible = !tui.helpVisible;
+  if (tui.helpVisible) {
+    stopSplashAnimation();
+    process.stdout.write("\x1B[2J\x1B[H" + renderHelpOverlay(getWidth()));
+    drawQueryPrompt();
+  } else if (tui.phase === "splash") {
+    startSplashAnimation();
+  } else {
+    paintWithScroll();
+  }
+}
+function saveCurrentReport() {
+  const filename = saveReport();
+  if (!filename) return;
+  const w = getWidth();
+  const savedFooter = buildFooter(w);
+  const confirmFooter = `  ${BRAND}\u2713${RESET2} ${DIM2}Saved: ${filename}${RESET2}`;
+  tui.lastContent = tui.lastContent.replace(savedFooter, confirmFooter);
+  paintWithScroll();
+  setTimeout(() => {
+    tui.lastContent = tui.lastContent.replace(confirmFooter, savedFooter);
+    paintWithScroll();
+  }, 2e3);
+}
+function openLoadPicker() {
+  tui.loadList = listReports();
+  if (tui.loadList.length === 0) return;
+  tui.loadIdx = 0;
+  tui.loadMode = true;
+  tui.phase = "live";
+  const overlay = renderLoadOverlay(getWidth());
+  showOverlay(overlay);
+}
+function resetToSplash() {
+  stopRenderAnimation();
+  tui.lastContent = "";
+  const connectedAgent2 = tui.agentState?.agent;
+  const connectedModel = tui.agentState?.model;
+  tui.agentState = connectedAgent2 ? { agent: connectedAgent2, model: connectedModel } : null;
+  tui.renderMeta = { model: null, tools: null, cost: null, as_of: null };
+  tui.blocks = null;
+  tui.phase = "splash";
+  const hint = tui.lastBlocks ? "/restore \xB7 /load" : "/load";
+  const connLabel = connectedAgent2 ? `Connected \xB7 ${connectedModel ? `${connectedAgent2} \xB7 ${connectedModel}` : connectedAgent2}` : "Waiting for agent";
+  tui.splashMsg = `${connLabel} \xB7 ${hint}`;
+  startSplashAnimation();
+}
+function quitApp() {
+  process.stdout.write("\x1B[?1049l\x1B[?25h\x1B[?1000l\x1B[?1006l");
+  process.exit(0);
+}
+function isRunning() {
+  const stage = tui.agentState?.stage;
+  return stage === "resolving" || stage === "gathering" || stage === "analyzing";
+}
 function handleKeypress(ch, key) {
   if (!key) key = {};
-  if (key.ctrl && key.name === "c") {
-    process.exit(0);
-  }
   if (isMouseSequenceActive()) return;
+  if (key.ctrl && key.name === "c") {
+    if (closeAnyOverlay()) return;
+    if (isRunning()) {
+      submitQuery("/cancel").catch(() => {
+      });
+      return;
+    }
+    if (tui.queryInput) return clearPrompt();
+    return;
+  }
+  if (key.ctrl && key.name === "d") {
+    if (!tui.queryInput) quitApp();
+    return;
+  }
   if (tui.inputMode) {
     if (key.name === "escape") {
       closeInput();
@@ -5404,85 +5676,15 @@ function handleKeypress(ch, key) {
     process.stdout.write("\x1B[2J\x1B[H" + renderInputOverlay(getWidth()) + "\x1B[?25h");
     return;
   }
-  if (tui.queryInput !== null) {
-    if (key.name === "escape") return cancelQueryInput();
-    if (key.name === "return") return void sendQueryInput();
-    if (key.name === "backspace") {
-      tui.queryInput = tui.queryInput.slice(0, -1);
-    } else if (typeof ch === "string" && ch.length === 1 && !key.ctrl && !key.meta) {
-      tui.queryInput += ch;
-    } else {
-      return;
-    }
-    drawQueryPrompt();
-    return;
-  }
-  if (ch === "n") {
-    showQueryInput();
-    return;
-  }
-  if (ch === "?") {
-    tui.helpVisible = !tui.helpVisible;
-    if (tui.helpVisible) {
-      stopSplashAnimation();
-      const w = getWidth();
-      const overlay = renderHelpOverlay(w);
-      process.stdout.write("\x1B[2J\x1B[H" + overlay);
-    } else {
-      if (tui.phase === "splash") {
-        startSplashAnimation();
-      } else {
-        paintWithScroll();
-      }
-    }
-    return;
-  }
-  if (key.name === "escape" && tui.helpVisible) {
-    tui.helpVisible = false;
-    if (tui.phase === "splash") {
-      startSplashAnimation();
-    } else {
-      paintWithScroll();
-    }
-    return;
-  }
-  if (tui.phase === "splash") {
-    if (ch === "q") {
-      process.stdout.write("\x1B[?1049l\x1B[?25h\x1B[?1000l\x1B[?1006l");
-      process.exit(0);
-    }
-    if ((key.name === "return" || ch === "r") && tui.lastBlocks) {
-      tui.blocks = tui.lastBlocks;
-      tui.phase = "live";
-      const output = runLayout(tui.lastBlocks, null, getWidth());
-      paintScreen(output);
-      return;
-    }
-    if (ch === "l") {
-      tui.loadList = listReports();
-      if (tui.loadList.length === 0) return;
-      tui.loadIdx = 0;
-      tui.loadMode = true;
-      tui.phase = "live";
-      const overlay = renderLoadOverlay(getWidth());
-      tui.lastContent = overlay;
-      process.stdout.write("\x1B[2J\x1B[H" + overlay);
-      return;
-    }
-    return;
-  }
-  if (!tui.lastContent) return;
-  const pageSize = Math.max(1, getHeight() - 2);
-  let changed = false;
   if (tui.askMode) {
     if (key.name === "escape") {
       submitQuery("/pick cancel").catch(() => {
       });
       closeAsk();
-    } else if (key.name === "up" || ch === "k") {
+    } else if (key.name === "up") {
       tui.askIdx = Math.max(0, tui.askIdx - 1);
       process.stdout.write("\x1B[2J\x1B[H" + renderAskOverlay(getWidth()));
-    } else if (key.name === "down" || ch === "j") {
+    } else if (key.name === "down") {
       tui.askIdx = Math.min(tui.askList.length - 1, tui.askIdx + 1);
       process.stdout.write("\x1B[2J\x1B[H" + renderAskOverlay(getWidth()));
     } else if (key.name === "return" && tui.askList.length > 0) {
@@ -5496,10 +5698,10 @@ function handleKeypress(ch, key) {
   if (tui.modelMode) {
     if (key.name === "escape") {
       closeModelPicker();
-    } else if (key.name === "up" || ch === "k") {
+    } else if (key.name === "up") {
       tui.modelIdx = Math.max(0, tui.modelIdx - 1);
       process.stdout.write("\x1B[2J\x1B[H" + renderModelOverlay(getWidth()));
-    } else if (key.name === "down" || ch === "j") {
+    } else if (key.name === "down") {
       tui.modelIdx = Math.min(tui.modelList.length - 1, tui.modelIdx + 1);
       process.stdout.write("\x1B[2J\x1B[H" + renderModelOverlay(getWidth()));
     } else if (key.name === "return" && tui.modelList.length > 0) {
@@ -5514,17 +5716,12 @@ function handleKeypress(ch, key) {
   if (tui.loadMode) {
     if (key.name === "escape") {
       tui.loadMode = false;
-      if (tui.lastBlocks) {
-        paintWithScroll();
-      } else {
-        stopSplashAnimation();
-        tui.phase = "splash";
-        startSplashAnimation();
-      }
-    } else if (key.name === "up" || ch === "k") {
+      hideOverlay();
+      paintOrSplash();
+    } else if (key.name === "up") {
       tui.loadIdx = Math.max(0, tui.loadIdx - 1);
       process.stdout.write("\x1B[2J\x1B[H" + renderLoadOverlay(getWidth()));
-    } else if (key.name === "down" || ch === "j") {
+    } else if (key.name === "down") {
       tui.loadIdx = Math.min(tui.loadList.length - 1, tui.loadIdx + 1);
       process.stdout.write("\x1B[2J\x1B[H" + renderLoadOverlay(getWidth()));
     } else if (key.name === "return" && tui.loadList.length > 0) {
@@ -5532,6 +5729,7 @@ function handleKeypress(ch, key) {
         const file = path6.join(REPORTS_DIR, tui.loadList[tui.loadIdx]);
         const saved = JSON.parse(fs6.readFileSync(file, "utf8"));
         tui.loadMode = false;
+        hideOverlay();
         if (saved.meta) tui.renderMeta = { ...tui.renderMeta, ...saved.meta };
         if (Array.isArray(saved.blocks)) {
           tui.lastBlocks = saved.blocks;
@@ -5540,84 +5738,56 @@ function handleKeypress(ch, key) {
         }
       } catch {
         tui.loadMode = false;
-        paintWithScroll();
+        hideOverlay();
+        paintOrSplash();
       }
     }
     return;
   }
-  if (ch === "s") {
-    const filename = saveReport();
-    if (filename) {
-      const msg = `${BRAND}\u2713${RESET2} ${DIM2}Saved: ${filename}${RESET2}`;
-      const w = getWidth();
-      const savedFooter = buildFooter(w);
-      const confirmFooter = `  ${msg}`;
-      tui.lastContent = tui.lastContent.replace(savedFooter, confirmFooter);
-      paintWithScroll();
-      setTimeout(() => {
-        tui.lastContent = tui.lastContent.replace(confirmFooter, savedFooter);
-        paintWithScroll();
-      }, 2e3);
-    }
+  if (tui.helpVisible) {
+    if (key.name === "escape" || key.ctrl && key.name === "g") return toggleHelp();
     return;
   }
-  if (ch === "l") {
-    tui.loadList = listReports();
-    tui.loadIdx = 0;
-    tui.loadMode = true;
-    process.stdout.write("\x1B[2J\x1B[H" + renderLoadOverlay(getWidth()));
-    return;
+  if (key.ctrl && key.name === "g") return toggleHelp();
+  if (key.ctrl && key.name === "s") return saveCurrentReport();
+  if (key.ctrl && key.name === "o") return openLoadPicker();
+  if (key.ctrl && key.name === "u") return clearPrompt();
+  if (key.name === "return") return void sendQueryInput();
+  if (key.name === "up") return recallHistory(1);
+  if (key.name === "down") return recallHistory(-1);
+  if (key.name === "backspace") {
+    tui.queryInput = tui.queryInput.slice(0, -1);
+    return drawQueryPrompt();
   }
+  if (typeof ch === "string" && ch.length === 1 && !key.ctrl && !key.meta) {
+    tui.queryInput += ch;
+    return drawQueryPrompt();
+  }
+  if (tui.phase === "splash" || !tui.lastContent) return;
   if (key.name === "tab" && tui.panelIds.length > 0) {
     const ids = tui.panelIds;
     const cur = ids.indexOf(tui.focusedPanel);
-    if (key.shift) {
-      tui.focusedPanel = ids[(cur - 1 + ids.length) % ids.length];
-    } else {
-      tui.focusedPanel = ids[(cur + 1) % ids.length];
-    }
-    paintWithScroll();
-    return;
+    tui.focusedPanel = key.shift ? ids[(cur - 1 + ids.length) % ids.length] : ids[(cur + 1) % ids.length];
+    return paintWithScroll();
   }
-  const num = parseInt(ch, 10);
-  if (num >= 1 && num <= 9 && !key.sequence?.startsWith("\x1B[") && !isMouseRecent() && tui.agentState?.stage === "complete" && tui.agentState?.follow_ups?.length) {
-    const fu = tui.agentState.follow_ups.find((f) => f.key === String(num));
-    if (fu?.question) {
-      void sendRuntimeQuery(fu.question);
-      return;
-    }
-  }
-  if (ch === "q") {
-    stopRenderAnimation();
-    tui.lastContent = "";
-    const connectedAgent2 = tui.agentState?.agent;
-    const connectedModel = tui.agentState?.model;
-    tui.agentState = connectedAgent2 ? { agent: connectedAgent2, model: connectedModel } : null;
-    tui.renderMeta = { model: null, tools: null, cost: null, as_of: null };
-    tui.blocks = null;
-    tui.phase = "splash";
-    const hint = tui.lastBlocks ? "Enter restore \xB7 l load" : "l load";
-    const connLabel = connectedAgent2 ? `Connected \xB7 ${connectedModel ? `${connectedAgent2} \xB7 ${connectedModel}` : connectedAgent2}` : "Waiting for agent";
-    tui.splashMsg = `${connLabel} \xB7 ${hint}`;
-    startSplashAnimation();
-    return;
-  }
-  if (key.name === "up" || ch === "k") {
+  const pageSize = Math.max(1, getHeight() - 2);
+  let changed = false;
+  if (key.ctrl && key.name === "up") {
     tui.scrollOffset = Math.max(0, tui.scrollOffset - 1);
     changed = true;
-  } else if (key.name === "down" || ch === "j") {
+  } else if (key.ctrl && key.name === "down") {
     tui.scrollOffset += 1;
     changed = true;
   } else if (key.name === "pageup" || key.sequence === "\x1B[5~") {
     tui.scrollOffset = Math.max(0, tui.scrollOffset - pageSize);
     changed = true;
-  } else if (key.name === "pagedown" || key.sequence === "\x1B[6~" || ch === " ") {
+  } else if (key.name === "pagedown" || key.sequence === "\x1B[6~") {
     tui.scrollOffset += pageSize;
     changed = true;
-  } else if (ch === "g") {
+  } else if (key.name === "home") {
     tui.scrollOffset = 0;
     changed = true;
-  } else if (ch === "G") {
+  } else if (key.name === "end") {
     tui.scrollOffset = Infinity;
     changed = true;
   }
@@ -5698,12 +5868,16 @@ Unhandled rejection: ${err}
   healthCheck().catch(() => {
   });
 }
-main().catch((err) => {
-  process.stderr.write(`Fatal: ${err.message}
+var isEntryPoint = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isEntryPoint) {
+  main().catch((err) => {
+    process.stderr.write(`Fatal: ${err.message}
 ${err.stack}
 `);
-  process.exit(1);
-});
+    process.exit(1);
+  });
+}
 export {
+  handleKeypress,
   setMouseReporting
 };

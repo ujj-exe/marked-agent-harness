@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tui } from './state.js';
-import { focusIndicator, renderHelpOverlay, renderInputOverlay, renderQueryOverlay, buildFooter, buildHeader, paintScreen, paintWithScroll } from './render.js';
+import { focusIndicator, renderHelpOverlay, renderInputOverlay, renderQueryOverlay, buildFooter, buildHeader, paintScreen, paintWithScroll, footerRow } from './render.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -49,11 +49,12 @@ describe('renderHelpOverlay', () => {
     process.stdout.rows = 24;
     const result = renderHelpOverlay(80);
     const text = strip(result);
+    expect(text).toContain('COMMAND LINE');
     expect(text).toContain('NAVIGATION');
     expect(text).toContain('ACTIONS');
-    expect(text).toContain('Scroll up / down');
+    expect(text).toContain('Scroll one page');
     expect(text).toContain('Save report');
-    expect(text).toContain('Quit terminal');
+    expect(text).toContain('Quit the terminal');
     process.stdout.rows = origRows;
   });
 
@@ -67,13 +68,14 @@ describe('renderHelpOverlay', () => {
     process.stdout.rows = origRows;
   });
 
-  it('includes splash screen keys', () => {
+  it('documents one keymap for every phase — the prompt is live on splash too', () => {
     const origRows = process.stdout.rows;
     process.stdout.rows = 24;
     const result = renderHelpOverlay(80);
     const text = strip(result);
-    expect(text).toContain('SPLASH SCREEN');
-    expect(text).toContain('Restore last dashboard');
+    expect(text).toContain('The prompt is always open');
+    expect(text).toContain('Cancel the running query');
+    expect(text).not.toContain('SPLASH SCREEN');
     process.stdout.rows = origRows;
   });
 });
@@ -139,6 +141,24 @@ describe('buildFooter', () => {
     expect(strip(result)).toContain(':compare');
   });
 
+  it('keeps long running prompts to one terminal row', () => {
+    tui.agentState = { stage: 'gathering', query: 'Analyze management claims against reported metrics. '.repeat(20) };
+    expect(strip(buildHeader(80))).toHaveLength(80);
+    expect(strip(buildFooter(80))).toHaveLength(80);
+  });
+
+  it('renders streaming write progress and ETA', () => {
+    tui.agentState = {
+      stage: 'analyzing', query: 'Reliance', tools: { called: 7, total: 7 },
+      progress: { phase: 'writing', outputTokens: 4210, targetTokens: 12000, etaSeconds: 68, completed: ['summary', 'thesis'] },
+    };
+    const plain = strip(buildFooter(160));
+    expect(plain).toContain('Writing');
+    expect(plain).toContain('summary, thesis');
+    expect(plain).toContain('~4,210 tok');
+    expect(plain).toContain('~68s left');
+  });
+
   it('renders complete state footer with follow_ups hint', () => {
     tui.agentState = {
       stage: 'complete',
@@ -148,7 +168,7 @@ describe('buildFooter', () => {
       ],
     };
     const result = buildFooter(120);
-    expect(strip(result)).toContain('1-2 drill');
+    expect(strip(result)).toContain('/1-/2 drill');
   });
 
   it('renders meta in footer when present', () => {
@@ -211,5 +231,28 @@ describe('paintScreen → paintWithScroll', () => {
     tui.agentState = { stage: 'gathering', skill: 'analyst', query: 'NVDA', tools: { called: 3, total: 8 } };
     const content = Array.from({ length: 30 }, (_, i) => `data ${i}`).join('\n');
     expect(() => paintScreen(content)).not.toThrow();
+  });
+});
+
+describe('footerRow', () => {
+  // The spinner repaints the footer every 110ms at this row. When it drifted
+  // from the full paint's geometry it drew a second footer over the scroll
+  // indicator — two "Analyzing" lines stacked on screen.
+  it('keeps the last row for the prompt when content fits', () => {
+    expect(footerRow(10, 24)).toBe(10);
+    expect(footerRow(23, 24)).toBe(23);
+  });
+
+  it('sits above the indicator and the prompt when content overflows', () => {
+    // rows 1..24 = header, body…, footer(22), indicator(23), prompt(24)
+    expect(footerRow(500, 24)).toBe(22);
+  });
+
+  it('never returns the prompt row', () => {
+    for (const rows of [12, 24, 40, 80]) {
+      for (const total of [1, rows - 2, rows - 1, rows, rows + 1, 1000]) {
+        expect(footerRow(total, rows)).toBeLessThan(rows);
+      }
+    }
   });
 });

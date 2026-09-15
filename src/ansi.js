@@ -25,9 +25,31 @@ export function fg(hex) {
   return `${ESC}38;2;${r};${g};${b}m`;
 }
 
+/** Bold + colour as one SGR sequence (`\x1b[1;38;2;r;g;bm`), not two. */
+export function boldFg(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  return `${ESC}1;38;2;${r};${g};${b}m`;
+}
+
 export function bg(hex) {
   const [r, g, b] = hexToRgb(hex);
   return `${ESC}48;2;${r};${g};${b}m`;
+}
+
+/**
+ * Mix a hex colour toward black (amount < 1) or white (amount > 1).
+ *
+ * The brand gradient used to be three hand-picked limes, which meant any
+ * theme but the lime one drew its logo in the wrong colour. Deriving the
+ * shades from the accent keeps the gradient in-family for every theme.
+ */
+export function shade(hex, amount) {
+  const mix = (c) => {
+    const v = amount <= 1 ? c * amount : c + (255 - c) * (amount - 1);
+    return Math.max(0, Math.min(255, Math.round(v)));
+  };
+  const [r, g, b] = hexToRgb(hex).map(mix);
+  return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
 // ── Core helpers ─────────────────────────────────────────────────

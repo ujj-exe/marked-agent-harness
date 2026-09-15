@@ -7,6 +7,7 @@
 
 import { createRequire } from 'module';
 import { REPORTS_DIR } from '../config/paths.js';
+import { fg, palette, setTheme, shade } from '../src/index.js';
 
 // __PKG_VERSION__ is replaced by esbuild at bundle time (scripts/build.js define).
 // When running from source (tests), fall back to reading package.json.
@@ -18,16 +19,39 @@ function _resolveVersion() {
 const PKG_VERSION = 'v' + _resolveVersion();
 
 // ── ANSI constants ──────────────────────────────────────────────────────────
+//
+// These are `let`, not `const`, so `applyTheme()` can rewrite them. ES module
+// live bindings mean every importer sees the new value without re-importing,
+// which is why switching themes recolours the brand mark, splash and focus
+// ring without touching their call sites.
 
-export const BRAND  = '\x1b[38;2;192;255;0m';
-export const LABEL  = '\x1b[38;2;55;78;255m';    // #374EFF blue (brand)
+export let BRAND  = '';
+export let LABEL  = '';
 export const BOLD   = '\x1b[1m';
 export const DIM    = '\x1b[2m';
 export const RESET  = '\x1b[0m';
 
-// Lime gradient marks (matches header engine coloring)
-export const LIME_D = '\x1b[38;2;61;122;0m';   // #3D7A00 dark lime
-export const LIME_M = '\x1b[38;2;127;191;0m';  // #7FBF00 mid lime
+// Gradient marks for the brand glyph, derived from the accent rather than
+// hand-picked, so a non-lime theme does not draw a lime logo.
+export let LIME_D = '';
+export let LIME_M = '';
+
+/** Recompute the themed ANSI constants from the active palette. */
+export function refreshBrand() {
+  const accent = palette('accent') || '#ffffff';
+  BRAND  = fg(accent);
+  LABEL  = fg(palette('label') || accent);
+  LIME_D = fg(shade(accent, 0.38));
+  LIME_M = fg(shade(accent, 0.68));
+}
+
+/** Set the active theme and recolour everything derived from it. */
+export function applyTheme(name) {
+  setTheme(name);
+  refreshBrand();
+}
+
+refreshBrand();
 
 export const VERSION = { current: PKG_VERSION };
 
@@ -86,6 +110,7 @@ export const tui = {
 
   // Agent→TUI state protocol (#15)
   agentState: null,
+  liveTape: [],
 
   // Focus state (#3 TUI Controls)
   focusedPanel: null,   // panel name currently focused (null = none)
@@ -95,7 +120,10 @@ export const tui = {
   helpVisible: false,
 
   // Runtime query prompt
-  queryInput: null,
+  queryInput: '',
+  overlayBackdrop: null,
+  queryHistory: [],
+  historyIdx: -1,
 };
 
 // ── Block type resolver ─────────────────────────────────────────────────────

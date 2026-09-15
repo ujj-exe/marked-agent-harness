@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fg, palette } from '../src/index.js';
 
 process.env.MARKED_HOME ||= fs.mkdtempSync(path.join(os.tmpdir(), 'marked-smoke-'));
 
@@ -20,7 +21,7 @@ const { MarkedClient } = await import('../data/marked-client.js');
 const { MarkedOrchestrator } = await import('../runtime/orchestrator.js');
 const { createAgentProvider } = await import('../runtime/providers.js');
 
-const B = '\x1b[38;2;192;255;0m';
+const B = fg(palette('accent'));
 const D = '\x1b[2m';
 const R = '\x1b[0m';
 const rule = char => `${D}${char.repeat(78)}${R}`;
