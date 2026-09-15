@@ -22,3 +22,5 @@ export const CAPABILITIES_PATH = path.join(MARKED_HOME, 'capabilities.json');
 export const ANALYTICS_DIR = path.join(MARKED_HOME, 'analytics');
 export const TUI_STATE_PATH = path.join(MARKED_HOME, 'tui.json');
 export const REPORTS_DIR = path.join(MARKED_HOME, 'reports');
+// Which tab and chart each company was left on, so reopening resumes it.
+export const WORLDS_PATH = path.join(MARKED_HOME, 'worlds.json');
