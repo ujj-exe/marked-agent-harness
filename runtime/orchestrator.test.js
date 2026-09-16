@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MarkedOrchestrator } from './orchestrator.js';
+import { MarkedOrchestrator, verdictPanel } from './orchestrator.js';
 
 function result() {
   return { type: 'research_result', summary: 'Summary', thesis: 'Evidence-led thesis', claims: [], risks: ['Risk'], conviction: 'uncertain' };
@@ -17,6 +17,48 @@ function harness(data) {
 }
 
 describe('Marked orchestrator', () => {
+  it('renders analytical facts separately from interpretation', () => {
+    const panel = verdictPanel({
+      ...result(),
+      bull_case: ['Demand recovers'],
+      bear_case: ['Pricing weakens'],
+      claims: [
+        { text: 'Revenue increased. [ev_1][ev_1]', evidence_ids: ['ev_1', 'ev_1'], classification: 'fact' },
+        { text: 'The business became more capital intensive.', evidence_ids: ['ev_1'], classification: 'inference' },
+      ],
+    }, ['raw validation warning'], 'analytical');
+    expect(panel.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'facts', items: ['Revenue increased. [ev_1]'] }),
+      expect.objectContaining({ type: 'interpretation', items: ['The business became more capital intensive. [ev_1]'] }),
+      expect.objectContaining({ type: 'bull_case', items: ['Demand recovers'] }),
+      expect.objectContaining({ type: 'bear_case', items: ['Pricing weakens'] }),
+    ]));
+    expect(panel.risks).not.toContain('raw validation warning');
+    expect(panel.sections.find(section => section.type === 'context').text).toContain('no unsupported material claim was rendered');
+  });
+
+  it('retrieves citable promoter holdings for a natural-language comparison', async () => {
+    const calls = [];
+    const data = {
+      resolveCompany: async reference => ({
+        company: { company_id: `co_${reference}`, common_name: reference },
+        securities: [{ exchange: 'NSE', symbol: reference.toUpperCase(), segment: 'CASH' }],
+      }),
+      financials: async () => ({ data: [] }),
+      shareholding: async ({ ticker }) => {
+        calls.push(ticker);
+        return { data: [{ period_end: '2026-06-30', promoter_pct: ticker === 'RELIANCE' ? 50.1 : 0 }] };
+      },
+    };
+    const h = harness(data);
+    await h.orchestrator.run('Compare Promoter shareholder of reliance and infosys');
+    expect(calls).toEqual(['RELIANCE', 'INFOSYS']);
+    expect(h.saved.evidence.filter(item => item.data_type === 'shareholding')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ company_name: 'reliance', metric: 'promoter_pct', value: 50.1 }),
+      expect.objectContaining({ company_name: 'infosys', metric: 'promoter_pct', value: 0 }),
+    ]));
+  });
+
   it('finishes an empty screen without buying a model call and renders its filters', async () => {
     const renders = [];
     let agentCalls = 0;
@@ -48,6 +90,58 @@ describe('Marked orchestrator', () => {
     });
     await orchestrator.run('Screen companies with net margin above 10%');
     expect(agentCalls).toBe(1);
+  });
+
+  it('grants native search for an evidence gap and records returned web sources', async () => {
+    let options;
+    let prompt;
+    let saved;
+    const orchestrator = new MarkedOrchestrator({
+      data: {},
+      agent: { name: 'codex', run: async (input, value) => {
+        prompt = input;
+        options = value;
+        return {
+          ...result(), sources: ['https://example.com/report'],
+          claims: [{ text: 'External context', evidence_ids: ['web_01'], classification: 'external_context' }],
+        };
+      } },
+      tui: { render: async () => ({}) },
+      save: session => { saved = session; },
+    });
+    const session = { intent: { kind: 'query' }, mode: 'research', requested_as_of: null };
+
+    await orchestrator.complete(session, {
+      question: 'Who is the new CEO?', asOf: new Date().toISOString(), agentName: 'codex',
+      packet: {}, evidence: [], blocks: [], totalTools: 0, mode: 'research',
+    });
+
+    expect(options.webSearch).toBe(true);
+    expect(prompt).toContain('fill those gaps before concluding');
+    expect(prompt).toContain('Do not downgrade the analysis merely because the initial packet is incomplete');
+    expect(saved.web_search.reason).toBe('external_context_required');
+    expect(saved.evidence).toContainEqual(expect.objectContaining({ evidence_id: 'web_01', source_url: 'https://example.com/report' }));
+    expect(saved.validation_warnings).toEqual([]);
+  });
+
+  it('requires a completed peer return bridge for performance attribution', async () => {
+    let prompt;
+    let options;
+    const orchestrator = new MarkedOrchestrator({
+      data: {},
+      agent: { name: 'codex', run: async (input, value) => { prompt = input; options = value; return result(); } },
+      tui: { render: async () => ({}) },
+      save: () => {},
+    });
+    const session = { intent: { kind: 'query' }, mode: 'analytical', requested_as_of: null };
+    await orchestrator.complete(session, {
+      question: 'Why has Infosys underperformed?', asOf: '2026-09-16', agentName: 'codex',
+      packet: { data_plan: { analysis_requirements: ['peer_relative_return'] } },
+      evidence: [], blocks: [], totalTools: 0, mode: 'analytical',
+    });
+    expect(options.webSearch).toBe(true);
+    expect(prompt).toContain('Complete the bridge from security price/total return');
+    expect(prompt).toContain('do not substitute a business-quality discussion');
   });
 
   it('patches completed streamed fields before the final verdict', async () => {
@@ -139,6 +233,35 @@ describe('Marked orchestrator', () => {
     expect(h.saved.intent.kind).toBe('macro');
     expect(h.saved.packet.query.evidence[0].title).toBe('RBI policy');
     expect(h.renders.at(-1)._state.stage).toBe('complete');
+  });
+
+  it('gives a research turn the open World as cited context', async () => {
+    let prompt = '';
+    const orchestrator = new MarkedOrchestrator({
+      data: { query: async () => ({ data: { evidence: [{ title: 'RBI policy', value: 'held' }] } }) },
+      agent: { name: 'codex', run: async value => { prompt = value; return result(); } },
+      tui: { render: async () => ({}) },
+      save: () => {},
+    });
+    await orchestrator.run('What is the RBI outlook?', { workspace: {
+      common_name: 'Infosys', symbol: 'INFY', tab: 'valuation',
+      peers: [{ company_id: 'co_tcs', common_name: 'TCS', isin: 'INE467B01029', sector: 'Information Technology' }],
+      packet: {
+        quote: { data: { price: 100, market_cap: 1000 } },
+        events: { data: [{ event_id: 'event_1', event_type: 'earnings', title: 'Results', event_at: '2026-07-01' }] },
+        financial_facts: [
+          { evidence_id: 'ev_001', concept_id: 'Revenue', value: 100, basis: 'consolidated', period: 'FY2026' },
+          { evidence_id: 'ev_002', concept_id: 'ProfitAfterTax', value: 10, basis: 'consolidated', period: 'FY2026' },
+          { evidence_id: 'ev_003', concept_id: 'BasicEarningsPerShare', value: 5, basis: 'consolidated', period: 'FY2026' },
+        ],
+      },
+      evidence: [{ evidence_id: 'ev_001', data_type: 'financial_fact', metric: 'Revenue', value: 100 }],
+    } });
+    expect(prompt).toContain('"active_tab":"valuation"');
+    expect(prompt).toContain('"peers":[{"company_id":"co_tcs","common_name":"TCS"');
+    expect(prompt).toContain('"valuation":{"period":"FY2026"');
+    expect(prompt).toContain('"events":[{"event_id":"event_1"');
+    expect(prompt).toContain('"evidence_id":"world_ev_001"');
   });
 
   it('resolves comparison names before fetching consolidated data', async () => {
@@ -423,6 +546,54 @@ describe('research packet guarantee', () => {
     await h.orchestrator.run('What is the RBI policy outlook?');
     expect(h.saved.evidence).toEqual([]);
   });
+
+  it('expands semantic filing hits under a fixed harness-side budget', async () => {
+    const filings = [];
+    let agentCalls = 0;
+    let saved;
+    const orchestrator = new MarkedOrchestrator({
+      data: {
+        query: async () => ({ data: {
+          status: 'ok',
+          plan: { route: 'semantic', reference: 'Infosys', concepts: [], search_text: 'earnings call transcript' },
+          evidence: { documents: [
+            { document_id: 'doc_latest', title: 'Q1 FY27 earnings call', content: 'Cover letter and participant list.' },
+            { document_id: 'doc_older', title: 'Q4 FY26 earnings call', content: 'Older call.' },
+          ] },
+        } }),
+        resolveCompany: async () => ({
+          company: { company_id: 'co_infy', common_name: 'Infosys' },
+          securities: [{ exchange: 'NSE', symbol: 'INFY', segment: 'CASH' }],
+        }),
+        financials: async () => ({ data: [] }),
+        filing: async documentId => {
+          filings.push(documentId);
+          return { data: {
+            document_id: documentId,
+            title: 'Q1 FY27 earnings call',
+            source_url: 'https://example.test/infy-call',
+            sections: [{
+              section_index: 4,
+              heading: 'Management discussion',
+              content: `Management discussed demand, margins, guidance and deal wins. ${'detail '.repeat(4_000)}`,
+            }],
+          } };
+        },
+      },
+      agent: { name: 'codex', run: async () => { agentCalls++; return result(); } },
+      tui: { render: async () => ({}) },
+      save: session => { saved = session; },
+    });
+
+    await orchestrator.run('What is the summary of the Infosys earnings call transcript?');
+
+    expect(filings).toEqual(['doc_latest']);
+    expect(saved.packet.narrative_evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ document_id: 'doc_latest', heading: 'Management discussion' }),
+    ]));
+    expect(saved.research_loop).toMatchObject({ requests: 1, stop_reason: 'evidence_target' });
+    expect(agentCalls).toBe(1);
+  });
 });
 
 // ── Packet hygiene ──────────────────────────────────────────────────────────
@@ -479,6 +650,30 @@ describe('prompt packet', () => {
     expect(serialized).not.toContain('zzzzzzzzzz');   // filing body
     expect(h.context.packet.financials).toBeUndefined();
     expect(h.context.packet.metrics).toBeUndefined();
+  });
+
+  it('maps normalized backend news into the reasoning packet with provenance', async () => {
+    const data = profileClient();
+    let params;
+    data.news = async value => {
+      params = value;
+      return { data: [{
+        news_id: 'news_1', headline: 'Reliance update', publisher: 'NSE', feed: 'nse_announcements',
+        url: 'https://example.com/news/1', published_at: '2026-09-16T09:00:00Z', source_tier: 'official',
+        summary: 'Official summary', company_ids: ['co_ril'], security_ids: ['sec_ril'],
+        sectors: [], regions: ['india'], topics: ['earnings'], event_id: null,
+      }] };
+    };
+    const h = capture(data);
+    await h.orchestrator.run('research reliance');
+    expect(params).toEqual({ company: 'RELIANCE', limit: 20 });
+    expect(h.context.packet.news[0]).toMatchObject({
+      news_id: 'news_1', feed: 'nse_announcements', summary: 'Official summary',
+      company_ids: ['co_ril'], security_ids: ['sec_ril'], regions: ['india'], topics: ['earnings'],
+    });
+    expect(h.context.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ data_type: 'news', title: 'Reliance update', source_url: 'https://example.com/news/1' }),
+    ]));
   });
 
   it('sends each fact as a number plus its evidence id, not a second copy of its source', async () => {

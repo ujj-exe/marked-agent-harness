@@ -248,6 +248,15 @@ function renderVerdictPanel(data, width, _panelWarnings) {
   const useBoxed = data.variant === 'boxed';
   if (!useBoxed) {
     const vLines = [];
+    const pushList = (title, items, bullet, role = 'data') => {
+      if (!Array.isArray(items) || !items.length) return;
+      vLines.push(pc('label', title));
+      for (const item of items) {
+        for (const [index, line] of wordWrap(String(item), Math.max(1, width - 2)).entries()) {
+          vLines.push(pc(role, `${index ? '  ' : bullet}${renderMarkdownInline(line)}`));
+        }
+      }
+    };
     if (data.title) vLines.push(pc('accent', data.title));
 
     // Sections-based plain rendering (v1.1)
@@ -276,6 +285,7 @@ function renderVerdictPanel(data, width, _panelWarnings) {
           case 'thesis': {
             const { text } = section;
             if (!text) break;
+            vLines.push(pc('label', 'INVESTMENT VIEW'));
             for (const line of wordWrap(text, width)) {
               vLines.push(pc('data', renderMarkdownInline(line)));
             }
@@ -283,19 +293,34 @@ function renderVerdictPanel(data, width, _panelWarnings) {
           }
 
           case 'catalysts': {
-            const { items } = section;
-            if (!Array.isArray(items)) break;
-            for (const catalyst of items) {
-              vLines.push(pc('positive', '✦ ') + pc('data', String(catalyst)));
-            }
+            pushList('CATALYSTS', section.items, '✦ ', 'positive');
             break;
           }
 
           case 'risks': {
+            pushList('RISKS', section.items, '⚠ ', 'warning');
+            break;
+          }
+
+          case 'bull_case': {
+            pushList('BULL CASE', section.items, '+ ', 'positive');
+            break;
+          }
+
+          case 'bear_case': {
+            pushList('BEAR CASE', section.items, '− ', 'negative');
+            break;
+          }
+
+          case 'facts':
+          case 'interpretation': {
             const { items } = section;
-            if (!Array.isArray(items)) break;
-            for (const risk of items) {
-              vLines.push(pc('warning', '⚠ ') + pc('data', String(risk)));
+            if (!Array.isArray(items) || !items.length) break;
+            vLines.push(pc('label', section.type === 'facts' ? 'FACTS' : 'INTERPRETATION'));
+            for (const item of items) {
+              for (const [index, line] of wordWrap(String(item), Math.max(1, width - 2)).entries()) {
+                vLines.push(pc('data', `${index ? '  ' : '• '}${renderMarkdownInline(line)}`));
+              }
             }
             break;
           }
@@ -346,7 +371,7 @@ function renderVerdictPanel(data, width, _panelWarnings) {
 
       // Warn lines after sections
       for (const warnMsg of _panelWarnings) {
-        vLines.push(pc('warning', warnMsg));
+        for (const line of wordWrap(String(warnMsg), width)) vLines.push(pc('warning', line));
       }
 
       return vLines.join('\n');

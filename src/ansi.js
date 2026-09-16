@@ -169,10 +169,17 @@ export function padCenter(s, width) {
  * Returns an array of line strings.
  */
 export function wordWrap(text, maxLen) {
+  maxLen = Math.max(1, Math.floor(maxLen));
   const words = String(text).split(' ');
   const lines = [];
   let cur = '';
-  for (const word of words) {
+  for (let word of words) {
+    while (word.length > maxLen) {
+      if (cur) { lines.push(cur); cur = ''; }
+      lines.push(word.slice(0, maxLen));
+      word = word.slice(maxLen);
+    }
+    if (!word) continue;
     if (cur === '') {
       cur = word;
     } else if ((cur + ' ' + word).length <= maxLen) {

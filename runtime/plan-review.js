@@ -60,6 +60,8 @@ export function reviewPrompt(question, plan, candidates, round, catalogue = null
       reference_candidates: plan.reference_candidates ?? plan.references,
       concepts: plan.concepts,
       required_concepts: plan.required_concepts,
+      analysis_requirements: plan.analysis_requirements ?? [],
+      datasets: plan.datasets ?? [],
       fiscal_years: plan.fiscal_years,
       period: plan.period,
       basis: plan.basis,
@@ -94,6 +96,9 @@ sentence literally names:
 - "how is the company doing" is a full profile: revenue, profit, margins, cash
   generation and balance-sheet strength.
 - "should I worry about X" asks for the evidence on both sides of X.
+- "why has the stock underperformed" is a return-attribution question: company
+  and peer/benchmark returns, the earnings/revision path and valuation-multiple
+  change are required. Business deterioration alone does not answer it.
 - A question naming a ratio needs the ratio's inputs, so the answer can show the
   arithmetic rather than assert the number.
 
@@ -116,6 +121,9 @@ Rules:
   pledge changes are shareholding; management commentary and results documents
   are filings; dividends and buybacks are corporate_actions; what the stock did
   is prices. A question can need these and no concepts at all.
+- When relative performance is requested without a comparator, add relevant
+  listed peers in "references". Those names are resolved against Marked before
+  retrieval; do not use a sector label as though it were a company.
 - Name every concept the question needs that the plan omits. A question about
   working capital needs inventories, receivables and payables; one about
   earnings quality needs profit and operating cash flow; one about returns needs
@@ -168,6 +176,9 @@ export function buildRepairPlan(plan, review) {
   // replacement: it has not been checked against Marked's identity index.
   const references = (Array.isArray(review.references) ? review.references : [])
     .filter(name => typeof name === 'string' && name.trim() && name.length <= 80);
+  const activeReferences = plan.analysis_requirements?.includes('peer_relative_return')
+    ? [...new Set([...plan.references, ...references])].slice(0, 5)
+    : plan.references;
 
   const datasets = (Array.isArray(review.datasets) ? review.datasets : []).filter(name => DATASETS.includes(name));
 
@@ -180,6 +191,7 @@ export function buildRepairPlan(plan, review) {
     period: PERIODS.includes(review.period) ? review.period : plan.period,
     basis: BASES.includes(review.basis) ? review.basis : plan.basis,
     route: ROUTES.includes(review.route) ? review.route : plan.route,
+    references: activeReferences,
     reference_candidates: [...new Set([...(plan.reference_candidates ?? plan.references), ...references])],
     requires_facts: plan.requires_facts || Boolean(required.length && plan.references.length),
   };
@@ -282,6 +294,10 @@ export function preflightConcern(plan) {
  */
 export function postflightConcern(plan, executed) {
   if (!plan || plan.subject !== 'company' || !executed) return null;
+  if (plan.analysis_requirements?.includes('peer_relative_return')
+    && executed.companies?.filter(company => company.entity).length < 2) {
+    return 'relative performance needs at least one resolved peer or benchmark';
+  }
   const required = plan.required_concepts ?? [];
   if (!required.length) return null;
   if (!executed.facts.length) return 'retrieval returned no facts at all';

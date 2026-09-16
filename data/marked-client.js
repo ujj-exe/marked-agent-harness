@@ -78,6 +78,7 @@ export class MarkedClient {
   }
 
   companies(params = {}, options) { return this.request('/v1/companies', { params, ...options }); }
+  company(reference, options) { return this.request(`/api/v1/companies/${encodeURIComponent(reference)}`, { ...options }); }
   instruments(params = {}, options) { return this.request('/v1/instruments', { params, ...options }); }
   prices(params = {}, options) { return this.request('/v1/prices', { params, ...options }); }
   quote({ symbol, exchange = 'NSE' } = {}, options) {
@@ -101,6 +102,10 @@ export class MarkedClient {
   metrics(params = {}, options) { return this.request('/v1/financial-metrics', { params, ...options }); }
   shareholding(params = {}, options) { return this.request('/v1/shareholding', { params, ...options }); }
   filings(params = {}, options) { return this.request('/v1/filings', { params, ...options }); }
+  filing(documentId, params = {}, options) {
+    if (!documentId) throw new Error('A filing document ID is required');
+    return this.request(`/v1/filings/${encodeURIComponent(documentId)}`, { params, ...options });
+  }
   corporateActions(params = {}, options) { return this.request('/v1/corporate-actions', { params, ...options }); }
   events(params = {}, options) { return this.request('/v1/events', { params, ...options }); }
   /**
@@ -162,7 +167,11 @@ export class MarkedClient {
       );
     }
     const raw = candidates.find(candidate => isExact(candidate, reference)) || candidates[0];
-    const company = normalizeCompany(raw);
+    let company = normalizeCompany(raw);
+    if (company.company_id && (!company.sector || !company.securities.length)) {
+      const detail = await this.company(company.company_id, options);
+      company = normalizeCompany(detail.data ?? raw);
+    }
     const securities = company.securities?.length
       ? company.securities
       : (await this.instruments({ company: company.company_id || reference, limit: 100 }, options)).data || [];

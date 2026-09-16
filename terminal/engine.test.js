@@ -485,6 +485,12 @@ describe('renderBlocks', () => {
     expect(renderBlocks([])).toBe('');
   });
 
+  it('renders evidence references as prominent reverse-video marks', () => {
+    const out = renderBlocks([{ text: 'Sources E2 and [E13]' }], 80);
+    expect(out).toContain('\x1b[7;1mE2\x1b[22;27m');
+    expect(out).toContain('\x1b[7;1m[E13]\x1b[22;27m');
+  });
+
   it('returns empty string for non-array input', () => {
     expect(renderBlocks(null)).toBe('');
     expect(renderBlocks('foo')).toBe('');

@@ -15,6 +15,7 @@ export class OpenAICodexProvider extends AgentProvider {
     fs.writeFileSync(schemaPath, JSON.stringify(options.schema || researchResultSchema), { mode: 0o600 });
     try {
       const args = [...(this.options.model ? ['--model', this.options.model] : []), '--schema', schemaPath];
+      if (options.webSearch) args.push('--web-search');
       const result = await runProcess(this.options.command || 'marked-codex', args, {
         cwd: options.cwd,
         input: prompt,

@@ -20,6 +20,8 @@ const FACT_ROUTES = new Set(['financial_metric_lookup', 'financial_analysis', 'c
 // concept, so concept-driven planning found nothing, routed it to search and
 // ended in a DATA GAP — for a number the runtime could have had immediately.
 const PRICE = /\b(?:share price|stock price|share prices|price|quote|trading at|last traded|ltp|market cap|market capitalisation|market capitalization|52[- ]week)\b/i;
+const VALUATION = /\b(?:valuation|p\s*\/\s*e|price[ -]to[ -]earnings|ev\s*\/\s*ebitda|enterprise value|price[ -]to[ -]book|p\s*\/\s*b)\b/i;
+const MARKET_PERFORMANCE = /\b(?:underperform(?:ed|ing|s)?|outperform(?:ed|ing|s)?|lag(?:ged|ging|s)?|beat(?:en|ing|s)?\s+(?:the\s+)?market|relative performance|peer-relative|shareholder returns?|total returns?)\b/i;
 
 // An analysis question is anything that asks about a movement or a judgement
 // rather than a number. Routing one of these as a metric lookup hands the
@@ -52,7 +54,9 @@ const CORE_ANALYSIS_CONCEPTS = [
 const ANALYSIS_RATIOS = ['net_margin', 'ebitda_margin', 'ebit_margin'];
 const COMPARISON = /\b(?:vs\.?|versus|compare[d]?|comparison|against|relative to|better than)\b/i;
 const FILING = /\b(?:filing|filings|annual report|disclosure|disclosures|investor presentation|transcript|latest report)\b/i;
-const EVENT = /\b(?:dividend|buyback|bonus issue|stock split|rights issue|corporate action|what happened|announcement)\b/i;
+const EVENT = /\b(?:events?|dividend|buyback|bonus issue|stock split|rights issue|corporate actions?|what happened|announcements?)\b/i;
+const OWNERSHIP = /\b(?:shareholders?|shareholding|ownership)\b|\b(?:promoters?|fii|dii|mutual funds?|public)\b.{0,30}\b(?:holdings?|stake)\b/i;
+const OWNERSHIP_REQUEST = /\b(?:(?:promoters?|fii|dii|mutual funds?|public)\s+)?(?:shareholders?|shareholding|holdings?|stake|ownership)\s+(?:of|in|between)\s+/i;
 
 // Asking whether profit turns into cash is one question, not two. Naming only
 // one side of it still requires both, or the comparison cannot be made and the
@@ -70,6 +74,8 @@ const CONCEPT_GROUPS = [
   [/\bworking capital\b/i, ['Inventories', 'TradeReceivables', 'TradePayables', 'ChangesInInventories']],
   [/\bcapital expenditure\b|\bcapex\b/i, ['PropertyPlantAndEquipment', 'NetCashFromInvestingActivities']],
   [/\bcash conversion cycle\b/i, ['Inventories', 'TradeReceivables', 'TradePayables']],
+  [VALUATION, ['BasicEarningsPerShare', 'ebitda', 'TotalEquity', 'Borrowings', 'CashAndCashEquivalents']],
+  [MARKET_PERFORMANCE, ['ProfitAfterTax', 'BasicEarningsPerShare']],
 ];
 
 /** Whether the question is really "does the profit turn into cash". */
@@ -101,7 +107,7 @@ const STOP_WORDS = new Set([
   // three things that do not exist.
   'identify', 'reconcile', 'summarise', 'summarize', 'outline', 'describe', 'list',
   'find', 'provide', 'include', 'highlight', 'note', 'consider', 'rank', 'rate',
-  'state', 'discuss', 'assess', 'evaluate', 'quantify', 'estimate', 'break', 'walk',
+  'state', 'discuss', 'assess', 'evaluate', 'quantify', 'estimate', 'break', 'walk', 'i',
   'then', 'finally', 'also', 'lastly', 'next', 'first', 'second', 'third',
   'is', 'are', 'does', 'do', 'can', 'could', 'should', 'would', 'will',
   // Price vocabulary: part of the question, never part of the company name.
@@ -120,20 +126,30 @@ export function buildDataPlan(question, { temporal = null, asOf = null, declared
   // Both sides of the comparison are required, whichever one the phrasing names.
   const grouped = CONCEPT_GROUPS.flatMap(([pattern, ids]) => (pattern.test(text) ? ids : []));
   const wantsQuote = PRICE.test(text);
+  const performanceAttribution = MARKET_PERFORMANCE.test(text);
   const concepts = [...new Set([
     ...(isEarningsQuality(text) ? EARNINGS_QUALITY_CONCEPTS : []),
     ...named,
     ...grouped,
   ])];
   const fiscalYears = extractFiscalYears(text, temporal);
+  const lookbackYears = Number(text.match(/\b(?:last|past|over)\s+(\d{1,2})\s+years?\b/i)?.[1]) || null;
   // A slash command states its subject outright. Extraction is for prose.
   // A screen names no company, so entity extraction has nothing to find and
   // will reach for whatever nouns are present -- which is how "FII" and "DII"
   // became company lookups. Decide the shape first, then skip extraction.
   const screen = parseScreen(text);
+  const mentionedReferences = extractEntities(text);
+  const comparisonReferences = extractComparisonEntities(text);
+  const ownershipReferences = OWNERSHIP.test(text)
+    ? text.replace(OWNERSHIP_REQUEST, '').replace(/^\s*(?:compare|contrast)\s+/i, '')
+      .split(/\s+(?:vs\.?|versus|and)\s+/i).map(item => item.trim()).filter(Boolean)
+    : [];
   const references = screen
     ? []
-    : (declared?.references?.length ? declared.references : extractEntities(text));
+    : (declared?.references?.length
+      ? [...new Set([...declared.references, ...comparisonReferences])].slice(0, 5)
+      : ownershipReferences.length > 1 ? ownershipReferences : mentionedReferences);
   const route = screen ? 'screen' : classifyRoute(text, { concepts, references });
   // What decides macro is the reference, not the prose around it. "RBI" and
   // "NIFTY" are references that are not companies; "asian paints" is a company
@@ -174,7 +190,17 @@ export function buildDataPlan(question, { temporal = null, asOf = null, declared
     period: /\bq[1-4]\b|\bquarter/i.test(text) ? 'quarterly' : 'annual',
     basis: /\bstandalone\b/i.test(text) ? 'standalone' : 'consolidated',
     as_of: asOf,
-    datasets: route === 'price_lookup' ? ['quote'] : wantsQuote && references.length ? ['quote'] : [],
+    lookback_years: lookbackYears,
+    analysis_requirements: performanceAttribution ? [
+      'security_price_return', 'peer_relative_return', 'earnings_revision_path', 'valuation_multiple_change',
+    ] : [],
+    datasets: [...new Set([
+      ...(route === 'price_lookup' || ((wantsQuote || VALUATION.test(text)) && references.length) ? ['quote'] : []),
+      ...(performanceAttribution && references.length ? ['prices', 'quote', 'corporate_actions'] : []),
+      ...(OWNERSHIP.test(text) && references.length ? ['shareholding'] : []),
+      ...(FILING.test(text) && references.length ? ['filings'] : []),
+      ...(EVENT.test(text) && references.length ? ['events', 'corporate_actions'] : []),
+    ])],
     requires_facts: FACT_ROUTES.has(route) && references.length > 0
       && (concepts.length > 0 || route === 'financial_analysis'),
   };
@@ -258,7 +284,7 @@ export async function executeDataPlan(data, plan, { limit = 300 } = {}) {
       const fetcher = DATASET_FETCHERS[name];
       if (!fetcher) continue;
       try {
-        const response = await fetcher(data, company.security.symbol);
+        const response = await fetcher(data, company.security.symbol, plan);
         const rows = name === 'quote' && response?.data && !Array.isArray(response.data)
           ? [response.data]
           : rowsOf(response);
@@ -328,7 +354,10 @@ const DATASET_FETCHERS = {
   filings: (data, ticker) => data.filings?.({ ticker, limit: 15 }),
   events: (data, ticker) => data.events?.({ ticker, limit: 15 }),
   corporate_actions: (data, ticker) => data.corporateActions?.({ ticker, limit: 15 }),
-  prices: (data, ticker) => data.prices?.({ ticker, latest: false, limit: 60 }),
+  prices: (data, ticker, plan) => data.prices?.({
+    ticker, interval: '1d', latest: false,
+    limit: Math.min(1300, Math.max(60, (plan.lookback_years ?? 1) * 260)),
+  }),
 };
 
 /** Names to try for one reference, best first. */
@@ -384,6 +413,11 @@ function classifyRoute(text, { concepts, references }) {
   if (comparing && references.length > 1) return 'comparison';
   // A price question with no financial concept behind it is just a quote.
   if (PRICE.test(text) && !concepts.length && references.length) return 'price_lookup';
+  // A filing can be evidence inside a broader analysis. Mentioning "filings"
+  // in a five-year deep dive must not collapse fifteen requested measures into
+  // an event summary. A filing-only question has no named financial concepts
+  // and still takes the narrow route below.
+  if (ANALYSIS.test(text) && concepts.length) return 'financial_analysis';
   if (FILING.test(text)) return 'filing_research';
   if (EVENT.test(text)) return 'event_research';
   if (MACRO.test(text) && !concepts.length) return 'factual_lookup';
@@ -391,7 +425,7 @@ function classifyRoute(text, { concepts, references }) {
   // a measure -- "how is Infosys performing" needs the same packet as "why did
   // Infosys margin fall", and answering it from a one-metric lookup is the
   // surface-level result this route exists to prevent.
-  if (ANALYSIS.test(text) && (concepts.length || references.length)) return 'financial_analysis';
+  if (ANALYSIS.test(text) && references.length) return 'financial_analysis';
   if (concepts.length) return 'financial_metric_lookup';
   return 'factual_lookup';
 }
@@ -480,6 +514,11 @@ function capitalisedRuns(text) {
   return text.match(/[A-Z][A-Za-z0-9&.]*(?:\s+[A-Z][A-Za-z0-9&.]*)*/g) || [];
 }
 
+function extractComparisonEntities(text) {
+  const clause = String(text).match(/\b(?:compare|contrast)\s+([\s\S]{1,240}?)(?=\s+\b(?:on|across)\b|[.!?]|$)/i)?.[1];
+  return clause ? extractEntities(clause) : [];
+}
+
 
 // ── Semantic planning ───────────────────────────────────────────────────────
 // Marked ships a planner that reads the question and returns a typed
@@ -508,7 +547,9 @@ export function mergePlans(local, luna) {
   const concepts = knownConcepts(luna.concepts);
   if (!concepts.length && !usableReference(luna.reference)) return local;
   const required = concepts.length ? concepts : local.required_concepts;
-  const references = usableReference(luna.reference) ? [luna.reference] : local.references;
+  const references = local.references.length > 1
+    ? local.references
+    : usableReference(luna.reference) ? [luna.reference] : local.references;
   // Routing ran before the company was known, because a lower-case name is
   // invisible to capitalised-run extraction. "reliance stock price" therefore
   // looked like a question with no subject. Re-route now that there is one.

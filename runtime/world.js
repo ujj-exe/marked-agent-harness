@@ -238,7 +238,7 @@ function overviewBlocks(world) {
     },
     { divider: 'RECENT' },
     ...(events
-      ? [{ table: eventTable(p.events, p.actions, clamp(events, 1, 18)) }]
+      ? [{ table: worldEventTable(world, clamp(events, 1, 18)) }]
       : [{ text: 'No events or corporate actions in the retrieved window.', id: 'world-no-events' }]),
   ];
 }
@@ -475,11 +475,16 @@ function filingsBlocks(world) {
 }
 
 function eventsBlocks(world) {
-  const p = world.packet ?? {};
   return [
     { divider: 'EVENTS & CORPORATE ACTIONS' },
-    { table: eventTable(p.events, p.actions, contentRows(world, 1) - 1) },
+    { table: worldEventTable(world, contentRows(world, 1) - 1) },
   ];
+}
+
+function worldEventTable(world, limit) {
+  const p = world.packet ?? {};
+  const refs = new Map(worldEvidence(world).list.map(item => [item.source_record_id, item.ref]));
+  return eventTable(p.events, p.actions, limit, item => refs.get(item.event_id ?? item.action_id));
 }
 
 /**

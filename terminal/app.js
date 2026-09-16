@@ -42,7 +42,7 @@ import { currentModel, listModels } from '../config/models.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const getWidth  = () => Math.min(process.stdout.columns ?? 80, 200);
+const getWidth  = () => process.stdout.columns ?? 80;
 const getHeight = () => process.stdout.rows ?? 24;
 
 // ── Phase state ──────────────────────────────────────────────────────────────
@@ -267,7 +267,8 @@ function onSplash(payload) {
  */
 function drawQueryPrompt() {
   const rows = getHeight();
-  const block = renderPromptBlock(getWidth(), tui.queryInput, tui.scope ?? null);
+  const block = renderPromptBlock(getWidth(), tui.queryInput, tui.scope ?? null, rows);
+  if (block.length !== tui.promptRows) return paintWithScroll(false);
   process.stdout.write(block
     .map((line, index) => `\x1b[${rows - block.length + 1 + index};1H\x1b[2K${line}`)
     .join(''));

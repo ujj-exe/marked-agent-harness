@@ -7,7 +7,7 @@
 
 import { CAPABILITIES, DESK, LIVE } from '../runtime/commands.js';
 import { BRAND, BOLD, DIM, RESET, LIME_D, LIME_M, LABEL, REPORTS_DIR, tui } from './state.js';
-import { visLen, ansiTrunc, fg, palette } from '../src/index.js';
+import { visLen, ansiTrunc, fg, palette, wordWrap } from '../src/index.js';
 import { shortDate } from '../data/normalization.js';
 import { renderBlocks, presetToBlocks } from './engine.js';
 import { estimateCost } from './cost.js';
@@ -154,6 +154,10 @@ export function highlightCommand(value) {
 }
 
 export function renderQueryOverlay(width, value = '') {
+  return renderQueryLines(width, value, 1).at(-1);
+}
+
+function renderQueryLines(width, value = '', maxLines = 1) {
   const displayValue = /^\/marked\s+\S+$/.test(value)
     ? value.replace(/^(\/marked\s+)\S+$/, (_match, prefix) => `${prefix}${'•'.repeat(value.length - prefix.length)}`)
     : value;
@@ -161,8 +165,23 @@ export function renderQueryOverlay(width, value = '') {
   // thing you have to remember — `INFY ›` says what the next question is about.
   const ticker = tui.scope?.ticker;
   const label = ticker ? ` ${ticker} ` : ' query ';
-  const field = `${LABEL}${label}${RESET}${BRAND}›${RESET} ${highlightCommand(displayValue)}${BRAND}█${RESET}`;
-  return ansiTrunc(field, Math.max(1, width - 1));
+  const prefix = `${LABEL}${label}${RESET}${BRAND}›${RESET} `;
+  const indent = ' '.repeat(visLen(prefix));
+  const contentWidth = Math.max(1, width - visLen(prefix) - 1);
+  let wrapped = wordWrap(displayValue, contentWidth)
+    .flatMap(line => line.length > contentWidth
+      ? Array.from({ length: Math.ceil(line.length / contentWidth) }, (_, index) => line.slice(index * contentWidth, (index + 1) * contentWidth))
+      : [line]);
+  if (!wrapped.length) wrapped = [''];
+  if (wrapped.length > maxLines) {
+    wrapped = wrapped.slice(-maxLines);
+    wrapped[0] = `…${wrapped[0].slice(1)}`;
+  }
+  return wrapped.map((line, index) => {
+    const start = index === 0 ? prefix : indent;
+    const cursor = index === wrapped.length - 1 ? `${BRAND}█${RESET}` : '';
+    return start + (index === 0 ? highlightCommand(line) : line) + cursor;
+  });
 }
 
 /**
@@ -173,11 +192,11 @@ export function renderQueryOverlay(width, value = '') {
  * while one is still running. The right-hand hint is the only part that
  * changes with state, so the field never moves under the cursor.
  */
-/** Rows the command line occupies: a rule, the field, and a hint line. */
+/** Minimum rows: a rule, one field row, and a hint line. */
 export const PROMPT_ROWS = 3;
 
 /**
- * The command line, as three rows.
+ * The command line grows with the draft, up to half the terminal height.
  *
  * Giving the field a rule above it and its hints below — rather than crowding
  * both onto one line — is what makes it read as a place to type rather than
@@ -185,9 +204,9 @@ export const PROMPT_ROWS = 3;
  * the next question will be about, which is the thing you most want to know
  * before asking one.
  *
- * @returns {string[]} exactly `PROMPT_ROWS` lines
+ * @returns {string[]} at least `PROMPT_ROWS` lines
  */
-export function renderPromptBlock(width, value = '', context = undefined) {
+export function renderPromptBlock(width, value = '', context = undefined, totalRows = process.stdout.rows ?? 24) {
   const s = tui.agentState;
   const running = s && (s.stage === 'gathering' || s.stage === 'analyzing' || s.stage === 'resolving');
 
@@ -200,7 +219,8 @@ export function renderPromptBlock(width, value = '', context = undefined) {
   const ruleWidth = Math.max(0, width - visLen(scope));
   const rule = `${DIM}${'─'.repeat(ruleWidth)}${RESET}${scope}`;
 
-  const field = renderQueryOverlay(Math.max(1, width - 1), value);
+  const maxFieldRows = Math.max(1, Math.floor(totalRows / 2) - 2);
+  const fields = renderQueryLines(Math.max(1, width - 1), value, maxFieldRows);
 
   const hints = running
     ? [`${BRAND}▸▸${RESET} ${DIM}working${RESET}`, '^C cancel', 'PgUp/Dn scroll']
@@ -209,7 +229,7 @@ export function renderPromptBlock(width, value = '', context = undefined) {
       : [`${BRAND}▸▸${RESET} ${DIM}type to ask${RESET}`, '/help', '^S save', '^O load', '^D quit'];
   const hint = hints[0] + `${DIM}` + hints.slice(1).map(part => `  ${part}`).join('') + `${RESET}`;
 
-  return [rule, field, ansiTrunc(hint, width)];
+  return [rule, ...fields, ansiTrunc(hint, width)];
 }
 
 /** Kept for callers that want the field alone. */
@@ -231,8 +251,6 @@ export function runLayout(layoutOrBlocks, panels, width, focused, rows = null) {
 }
 
 /** Chrome around the body: header, footer, scroll indicator, command line. */
-const CHROME_ROWS = 2 + PROMPT_ROWS;
-
 /**
  * Render, measure, and give the leftover rows to whatever asked for them.
  *
@@ -250,7 +268,7 @@ export function fillHeight(blocks, width, rows) {
   const growable = findGrowable(blocks);
   if (!growable) return once;
 
-  const available = rows - CHROME_ROWS;
+  const available = rows - 2 - renderPromptBlock(width, tui.queryInput ?? '', tui.scope ?? null, rows).length;
   const used = once.split('\n').length;
   const slack = available - used;
   // One row of slack is not worth a second pass, and negative slack means the
@@ -496,10 +514,10 @@ let _animTimer = null;
  * @param {number} totalLines lines in `tui.lastContent`
  * @param {number} rows terminal height
  */
-export function footerRow(totalLines, rows) {
-  const rowsForContent = rows - PROMPT_ROWS;
+export function footerRow(totalLines, rows, promptRows = tui.promptRows ?? PROMPT_ROWS) {
+  const rowsForContent = rows - promptRows;
   if (totalLines <= rowsForContent) return totalLines;
-  return rows - PROMPT_ROWS - 1;                   // …footer, indicator, then the prompt block
+  return rows - promptRows - 1;                   // …footer, indicator, then the prompt block
 }
 
 export function startRenderAnimation() {
@@ -592,13 +610,16 @@ export function paintWithScroll(clear = true) {
   allLines[0] = buildHeader(w);
   displayContent = allLines.join('\n');
 
-  // The command line owns the last three rows in every path, so reserve them
+  // The command line owns the last rows in every path, so reserve its current
+  // adaptive height before deciding whether the content fits.
   // before deciding whether the content fits.
-  const promptBlock = renderPromptBlock(w, tui.queryInput ?? '', tui.scope ?? null);
+  const promptBlock = renderPromptBlock(w, tui.queryInput ?? '', tui.scope ?? null, rows);
+  const promptRows = promptBlock.length;
+  tui.promptRows = promptRows;
   const paintPrompt = () => promptBlock
-    .map((line, index) => `\x1b[${rows - PROMPT_ROWS + 1 + index};1H\x1b[2K${line}`)
+    .map((line, index) => `\x1b[${rows - promptRows + 1 + index};1H\x1b[2K${line}`)
     .join('');
-  const rowsForContent = rows - PROMPT_ROWS;
+  const rowsForContent = rows - promptRows;
 
   if (totalLines <= rowsForContent) {
     if (clear) {
@@ -608,7 +629,7 @@ export function paintWithScroll(clear = true) {
       const padded = allLines.map(l => l + ' '.repeat(Math.max(0, w - visLen(l)))).join('\n');
       process.stdout.write('\x1b[H' + padded);
       // Clear any leftover rows below, stopping short of the prompt block.
-      for (let r = totalLines + 1; r <= rows - PROMPT_ROWS; r++) {
+      for (let r = totalLines + 1; r <= rows - promptRows; r++) {
         process.stdout.write(`\x1b[${r};1H\x1b[2K`);
       }
       process.stdout.write(paintPrompt());
@@ -620,7 +641,7 @@ export function paintWithScroll(clear = true) {
   const stickyLine = allLines[0];
   const bodyLines  = allLines.slice(1, allLines.length - 1);
   const footerLine = allLines[allLines.length - 1];
-  const bodyRows   = rows - 3 - PROMPT_ROWS; // sticky + footer + indicator + the prompt block
+  const bodyRows   = Math.max(0, rows - 3 - promptRows); // sticky + footer + indicator + the prompt block
 
   const maxOffset = Math.max(0, bodyLines.length - bodyRows);
   tui.scrollOffset = Math.max(0, Math.min(tui.scrollOffset, maxOffset));

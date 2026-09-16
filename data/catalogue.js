@@ -55,6 +55,8 @@ export async function datasetCatalogue(data) {
       'there is no free-cash-flow concept; operating cash flow and capex are reported separately',
       'a missing metric is an unavailable input, never zero',
       'segment-level and geography-level breakdowns are not published as facts',
+      'price-series coverage must be checked against the requested return horizon',
+      'consensus estimate and earnings-revision history is not published',
     ],
   };
 

@@ -38,13 +38,13 @@ export function newsBlocks(items = [], { title = 'NEWS', limit = 20, showTopics 
       tierMark(item.source_tier),
       String(item.publisher ?? '—'),
       String(item.headline ?? '—'),
-      ...(showTopics ? [list(item.topics)] : []),
+      ...(showTopics ? [list([...(item.topics ?? []), ...(item.regions ?? [])])] : []),
     ],
   }));
   return [
     { divider: title },
     { table: {
-      headers: ['Published', '', 'Publisher', 'Headline', ...(showTopics ? ['Topics'] : [])],
+      headers: ['Published', '', 'Publisher', 'Headline', ...(showTopics ? ['Tags'] : [])],
       rows,
     } },
     { text: `${items.length} item${items.length === 1 ? '' : 's'} · ${DIM}official sources first${RESET}`, id: 'news-count' },

@@ -25,7 +25,9 @@ def output_text(response: dict[str, Any]) -> str:
     raise CodexAuthError("Codex returned no structured result.", code="empty_response")
 
 
-async def run(prompt: str, model: str | None, schema: dict[str, Any]) -> dict[str, Any]:
+async def run(
+    prompt: str, model: str | None, schema: dict[str, Any], *, web_search: bool = False
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "input": prompt,
         "store": False,
@@ -40,6 +42,8 @@ async def run(prompt: str, model: str | None, schema: dict[str, Any]) -> dict[st
     }
     if model:
         payload["model"] = model
+    if web_search:
+        payload["tools"] = [{"type": "web_search", "search_context_size": "low"}]
     response = await responses_json(payload, selected=CODEX_PROVIDER)
     if response is None:
         raise CodexAuthError("OpenAI Codex is not signed in.", code="login_required")
@@ -53,10 +57,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="marked-codex")
     parser.add_argument("--model")
     parser.add_argument("--schema", required=True)
+    parser.add_argument("--web-search", action="store_true")
     args = parser.parse_args()
     try:
         schema = json.loads(Path(args.schema).read_text(encoding="utf-8"))
-        result = asyncio.run(run(sys.stdin.read(), args.model, schema))
+        result = asyncio.run(run(sys.stdin.read(), args.model, schema, web_search=args.web_search))
         print(json.dumps(result, separators=(",", ":")))
     except (CodexAuthError, OSError, ValueError, json.JSONDecodeError) as error:
         print(f"marked-codex: {error}", file=sys.stderr)

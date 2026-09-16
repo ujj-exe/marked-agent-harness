@@ -307,6 +307,16 @@ describe('renderPromptBlock', () => {
       }
     }
   });
+
+  it('grows upward to keep a long question visible', () => {
+    const question = 'Can you do a deep dive on Reliance Industries and explain what changed over five years? '
+      + 'Look at revenue, profit, margins, debt, capex, segment mix, shareholding, filings, valuation and peers. '.repeat(4)
+      + 'Finish with the biggest things an investor should watch over the next couple of quarters.';
+    const block = renderPromptBlock(80, question, { detail: 'NSE:RELIANCE · OVERVIEW' }, 40);
+    expect(block.length).toBeGreaterThan(PROMPT_ROWS);
+    expect(strip(block.slice(1, -1).join(' '))).toContain('biggest');
+    expect(strip(block.at(-2))).toContain('quarters.');
+  });
 });
 
 describe('the prompt carries the scope', () => {

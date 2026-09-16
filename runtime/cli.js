@@ -17,7 +17,7 @@ import { TuiClient } from './tui-client.js';
 import { appendConversationTurn, createConversation, formatConversationHistory, loadConversation, saveConversation } from './session.js';
 import { CAPABILITIES, DESK, LIVE, parseCapabilityCommand, parseDeskCommand, parseLiveCommand, parseModelCommand } from './commands.js';
 import { runCapability } from './capabilities.js';
-import { fetchLiveTape, liveTapeBlock } from './live-tape.js';
+import { fetchLiveTape, liveTapePayload } from './live-tape.js';
 import { applyAnswer, companyClarification, nextClarification } from './clarify.js';
 import { resolvePlan } from './plan.js';
 import { runOnboarding } from './onboarding.js';
@@ -160,7 +160,7 @@ async function showNews(filter) {
 async function loadNews(world) {
   if (Array.isArray(world.news) || !await ensureOrchestrator()) return;
   try {
-    const response = await data.news({ ticker: world.symbol, limit: 30 });
+    const response = await data.news({ company: world.symbol || world.company_id, limit: 30 });
     world.news = Array.isArray(response?.data) ? response.data : [];
   } catch {
     world.news = [];
@@ -369,7 +369,7 @@ const stopLive = () => { if (liveTimer) clearInterval(liveTimer); liveTimer = nu
 const refreshLive = async () => {
   if (!data || !liveSymbols.length || liveRefresh) return;
   liveRefresh = fetchLiveTape(data, liveSymbols)
-    .then(rows => tui.render({ patch: true, blocks: [liveTapeBlock(rows)], liveTape: rows }))
+    .then(rows => tui.render(liveTapePayload(rows)))
     .catch(() => {})
     .finally(() => { liveRefresh = null; });
   await liveRefresh;
@@ -378,7 +378,7 @@ const startLive = async symbols => {
   stopLive();
   liveSymbols = symbols;
   if (!liveSymbols.length) {
-    await tui.render({ patch: true, liveTape: [], blocks: [{ text: 'Live tape disabled', id: 'live-tape' }] });
+    await tui.render(liveTapePayload([]));
     return;
   }
   await refreshLive();
@@ -660,8 +660,10 @@ try {
     while (attempts++ < 3) {
       let session;
       try {
+        if (world && /\b(?:peers?|compare|comparison|versus|vs\.?)\b/i.test(question)) await loadPeers(world);
         session = await orchestrator.run(question, {
           agentName: agent.name, asOf, conversation, plan,
+          workspace: world,
           // Inside a world the company is settled, so the question inherits it
           // rather than being re-resolved from whatever name it happens to
           // contain. This is what lets "why did margins fall?" work at all.

@@ -23,6 +23,12 @@ describe('claude provider arguments', () => {
   it('omits --model when no model is pinned', () => {
     expect(claudeArgs({}, 'q', {})).not.toContain('--model');
   });
+
+  it('exposes only native web tools when the harness grants search', () => {
+    const args = claudeArgs({}, 'q', {}, undefined, true);
+    expect(args[args.indexOf('--tools') + 1]).toBe('WebSearch,WebFetch');
+    expect(args[args.indexOf('--allowedTools') + 1]).toBe('WebSearch,WebFetch');
+  });
 });
 
 describe('MCP isolation', () => {

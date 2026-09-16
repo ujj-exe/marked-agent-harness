@@ -11,8 +11,8 @@ export function evidenceFromRecord(record, { companyId = null, sourceType = 'mar
     company_name: record?.company_name ?? null,
     document_id: record?.document_id ?? source.document_id ?? null,
     source_type: sourceType,
-    source_url: record?.source_url ?? source.source_url ?? source.url ?? null,
-    title: record?.title ?? source.title ?? null,
+    source_url: record?.source_url ?? record?.url ?? source.source_url ?? source.url ?? null,
+    title: record?.title ?? record?.headline ?? source.title ?? null,
     source_label: record?.source_label ?? source.label ?? null,
     filing_date: record?.filing_date ?? record?.published_at ?? source.filing_date ?? null,
     period: record?.period_end ?? record?.period ?? null,
@@ -33,24 +33,42 @@ export function buildEvidence(records, options) {
 }
 
 export function validateClaims(result, evidence) {
-  const known = new Set(evidence.map(item => item.evidence_id));
+  const byId = new Map(evidence.map(item => [item.evidence_id, item]));
+  const known = new Set(byId.keys());
   const financial = new Set(evidence.filter(item => FINANCIAL_DATA_TYPES.includes(item.data_type)).map(item => item.evidence_id));
   const warnings = [];
   const claims = Array.isArray(result?.claims) ? result.claims : [];
+  const kept = [];
   for (const claim of claims) {
-    const ids = Array.isArray(claim.evidence_ids) ? claim.evidence_ids : [];
+    let ids = Array.isArray(claim.evidence_ids) ? claim.evidence_ids : [];
     const invalid = ids.filter(id => !known.has(id));
-    if (!ids.length && claim.classification === 'fact') warnings.push(`Factual claim has no evidence: ${claim.text || 'unlabeled claim'}`);
+    if (invalid.length) {
+      warnings.push(`Removed unknown evidence reference: ${invalid.join(', ')}`);
+      ids = ids.filter(id => known.has(id));
+      claim.evidence_ids = ids;
+    }
+    const webOnly = ids.length && ids.every(id => byId.get(id)?.data_type === 'web');
+    if (claim.classification === 'fact' && webOnly) {
+      claim.classification = 'external_context';
+      warnings.push(`Reclassified web-sourced claim: ${claim.text || 'unlabeled claim'}`);
+    }
+    if (claim.classification === 'external_context' && (!ids.length || !webOnly)) {
+      warnings.push(`Omitted unsupported external claim: ${claim.text || 'unlabeled claim'}`);
+      continue;
+    }
+    if (!ids.length && claim.classification === 'fact') {
+      warnings.push(`Omitted unsupported factual claim: ${claim.text || 'unlabeled claim'}`);
+      continue;
+    }
     // A search or planning record cannot carry a number. If the claim states one,
     // it has to point at a validated financial fact, not at generic query evidence.
     if (claim.classification === 'fact' && ids.length && /\d/.test(String(claim.text)) && !ids.some(id => financial.has(id))) {
-      warnings.push(`Numeric claim cites no validated financial fact: ${claim.text || 'unlabeled claim'}`);
+      warnings.push(`Omitted unsupported numeric claim: ${claim.text || 'unlabeled claim'}`);
+      continue;
     }
-    if (invalid.length) {
-      warnings.push(`Claim references unknown evidence: ${invalid.join(', ')}`);
-      claim.evidence_ids = ids.filter(id => known.has(id));
-    }
+    kept.push(claim);
   }
+  result.claims = kept;
   return { result, warnings };
 }
 
@@ -60,7 +78,7 @@ export function validateClaims(result, evidence) {
 // — concept, period, basis, unit, company — is allowed to satisfy a financial
 // claim. Everything else stays `query_evidence` and cannot back a number.
 
-export const FINANCIAL_DATA_TYPES = ['financial_fact', 'metric'];
+export const FINANCIAL_DATA_TYPES = ['financial_fact', 'metric', 'shareholding', 'market_price', 'corporate_action'];
 
 const REQUIRED_FACT_FIELDS = ['value', 'concept_id', 'period', 'basis', 'unit', 'company'];
 

@@ -9,6 +9,7 @@ async def test_runtime_sends_schema_and_returns_structured_output(monkeypatch):
         assert kwargs["selected"] == "openai-codex"
         assert payload["store"] is False
         assert payload["text"]["format"]["schema"] == {"type": "object"}
+        assert payload["tools"] == [{"type": "web_search", "search_context_size": "low"}]
         return {
             "output": [
                 {"type": "message", "content": [{"type": "output_text", "text": '{"ok":true}'}]}
@@ -16,4 +17,4 @@ async def test_runtime_sends_schema_and_returns_structured_output(monkeypatch):
         }
 
     monkeypatch.setattr(codex_runtime, "responses_json", request)
-    assert await codex_runtime.run("question", "gpt-test", {"type": "object"}) == {"ok": True}
+    assert await codex_runtime.run("question", "gpt-test", {"type": "object"}, web_search=True) == {"ok": True}

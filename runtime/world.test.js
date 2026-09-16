@@ -143,6 +143,21 @@ describe('worldBlocks', () => {
     expect(worldBlocks(w, 'research').find(block => block.id === 'world-research-verdict')?.data.thesis)
       .toBe('Valuation is unchanged.');
   });
+
+  it('marks recent events with their evidence reference', () => {
+    const evidence = Array.from({ length: 13 }, (_, index) => ({
+      evidence_id: `ev_${index + 1}`,
+      source_record_id: index === 12 ? 'event_sale' : `event_${index + 1}`,
+    }));
+    const w = createWorld({
+      entity,
+      security,
+      packet: { ...packet, events: { data: [{ event_id: 'event_sale', event_at: '2026-09-07', event_type: 'other', title: 'Sale Or Disposal Of Stake' }] } },
+      evidence,
+    });
+    const recent = worldBlocks(w, 'overview').find(block => block.table?.headers?.includes('Title'));
+    expect(recent.table.rows[0].cells[2]).toBe('Sale Or Disposal Of Stake [E13]');
+  });
 });
 
 describe('keyMetricsTable', () => {

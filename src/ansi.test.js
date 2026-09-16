@@ -6,9 +6,14 @@ import {
   strip, visLen, ansiTrunc,
   padRight, padLeft, padCenter,
   boxTop, boxBot, boxRow, boxDivider, boxEmpty,
+  wordWrap,
 } from './ansi.js';
 
 beforeEach(() => setTheme('marked'));
+
+it('hard-wraps tokens longer than the available width', () => {
+  expect(wordWrap('[ev_1][ev_2][ev_3]', 8).every(line => line.length <= 8)).toBe(true);
+});
 
 // ── fg / bg ───────────────────────────────────────────────────────────────────
 

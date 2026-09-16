@@ -121,6 +121,7 @@ export const tui = {
 
   // Runtime query prompt
   queryInput: '',
+  promptRows: 3,
   overlayBackdrop: null,
   // What the next question is about — the open Company World, when there is
   // one. Shown on the command line's rule so the scope is never a guess.

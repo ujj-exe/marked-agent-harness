@@ -57,8 +57,9 @@ function renderSectionBoxed(section, width) {
       lines.push(boxEmpty(width));
       lines.push(boxDivider(width, 'CATALYSTS'));
       for (const catalyst of items) {
-        const catalystLine = pc('positive', '✦ ') + pc('data', String(catalyst));
-        lines.push(boxRow(catalystLine, width));
+        for (const [index, text] of wordWrap(String(catalyst), width - 6).entries()) {
+          lines.push(boxRow(pc('positive', `${index ? '  ' : '✦ '}${renderMarkdownInline(text)}`), width));
+        }
       }
       break;
     }
@@ -69,8 +70,39 @@ function renderSectionBoxed(section, width) {
       lines.push(boxEmpty(width));
       lines.push(boxDivider(width, 'RISK FACTORS'));
       for (const risk of items) {
-        const riskLine = pc('warning', '⚠ ') + pc('data', String(risk));
-        lines.push(boxRow(riskLine, width));
+        for (const [index, text] of wordWrap(String(risk), width - 6).entries()) {
+          lines.push(boxRow(pc('warning', `${index ? '  ' : '⚠ '}${renderMarkdownInline(text)}`), width));
+        }
+      }
+      break;
+    }
+
+    case 'bull_case':
+    case 'bear_case': {
+      const { items } = section;
+      if (!Array.isArray(items) || items.length === 0) break;
+      const bull = section.type === 'bull_case';
+      lines.push(boxEmpty(width));
+      lines.push(boxDivider(width, bull ? 'BULL CASE' : 'BEAR CASE'));
+      for (const item of items) {
+        for (const [index, text] of wordWrap(String(item), width - 6).entries()) {
+          lines.push(boxRow(pc(bull ? 'positive' : 'negative', `${index ? '  ' : bull ? '+ ' : '− '}${renderMarkdownInline(text)}`), width));
+        }
+      }
+      break;
+    }
+
+    case 'facts':
+    case 'interpretation': {
+      const { items } = section;
+      if (!Array.isArray(items) || items.length === 0) break;
+      lines.push(boxEmpty(width));
+      lines.push(boxDivider(width, section.type === 'facts' ? 'FACTS' : 'INTERPRETATION'));
+      const innerW = width - 6;
+      for (const item of items) {
+        for (const [index, text] of wordWrap(String(item), innerW).entries()) {
+          lines.push(boxRow(pc('data', `${index ? '  ' : '• '}${renderMarkdownInline(text)}`), width));
+        }
       }
       break;
     }

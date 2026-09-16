@@ -160,6 +160,12 @@ describe('review triage', () => {
     expect(postflightConcern(plan, got(['Revenue', 'ProfitAfterTax']))).toMatch(/2 of 4/);
   });
 
+  it('does not accept a one-company packet for peer-relative performance', () => {
+    const plan = company({ analysis_requirements: ['peer_relative_return'] });
+    expect(postflightConcern(plan, { facts: [{ concept_id: 'ProfitAfterTax' }], companies: [{ entity: {} }] }))
+      .toMatch(/peer or benchmark/);
+  });
+
   it('says nothing when the plan asked for nothing to begin with', () => {
     expect(postflightConcern(company({ required_concepts: [] }), { facts: [] })).toBeNull();
   });
@@ -185,6 +191,14 @@ describe('query/plan builder', () => {
     expect(repaired.concepts).not.toContain('NotAConcept');
     expect(repaired.datasets).toEqual(['shareholding']);
     expect(repaired.basis).toBe(plan().basis);          // the bad enum is dropped
+  });
+
+  it('adds resolved peer candidates when return attribution requires them', () => {
+    const before = { ...plan(), references: ['INFY'], analysis_requirements: ['peer_relative_return'] };
+    const repaired = buildRepairPlan(before, {
+      verdict: 'revise', reasoning: 'peer return required', references: ['TCS', 'HCLTech', 'Wipro'],
+    });
+    expect(repaired.references).toEqual(['INFY', 'TCS', 'HCLTech', 'Wipro']);
   });
 
   it('bounds the repair to one round by default', async () => {

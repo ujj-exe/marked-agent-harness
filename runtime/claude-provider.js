@@ -30,7 +30,7 @@ export class ClaudeCodeProvider extends AgentProvider {
     try {
       const result = await runProcess(
         this.options.command || 'claude',
-        claudeArgs(this.options, prompt, process.env, options.schema),
+        claudeArgs(this.options, prompt, process.env, options.schema, options.webSearch),
         { cwd: options.cwd, timeoutMs: options.timeoutMs, signal: this.controller.signal, onStdout: read },
       );
       read.finish();
@@ -47,7 +47,7 @@ export class ClaudeCodeProvider extends AgentProvider {
  * or the keychain, so asking for it on a subscription login produces an api_error
  * with no explanation. Take the isolation only when a key is actually present.
  */
-export function claudeArgs({ model } = {}, prompt = '', env = process.env, schema = researchResultSchema) {
+export function claudeArgs({ model } = {}, prompt = '', env = process.env, schema = researchResultSchema, webSearch = false) {
   return [
     // This call reasons over a packet and calls no tools, so loading the user's
     // project MCP servers costs a slower session boot (measured: 6.7s → 4.4s)
@@ -58,12 +58,15 @@ export function claudeArgs({ model } = {}, prompt = '', env = process.env, schem
     ...(model ? ['--model', model] : []),
     ...(env.ANTHROPIC_API_KEY ? ['--bare'] : []),
     '-p', '--restricted', '--permission-prompts', 'none', '--no-session-persistence',
+    ...(webSearch ? ['--tools', 'WebSearch,WebFetch', '--allowedTools', 'WebSearch,WebFetch'] : ['--tools', '']),
     // Streamed, not buffered: the document is the same either way, but this way
     // the terminal can show it being written instead of a spinner. `--verbose`
     // and `--include-partial-messages` are required by the CLI for this format.
     '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     '--json-schema', JSON.stringify(schema),
-    '--append-system-prompt', 'You work inside Marked. Never retrieve data, render UI, write files, or invent facts. Use only what the prompt supplies.',
+    '--append-system-prompt', webSearch
+      ? 'You work inside Marked. Use only native WebSearch and WebFetch when the prompt grants them. Never run commands, render UI, write files, or invent facts.'
+      : 'You work inside Marked. Never retrieve data, render UI, write files, or invent facts. Use only what the prompt supplies.',
     prompt,
   ];
 }

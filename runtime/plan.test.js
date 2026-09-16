@@ -60,6 +60,48 @@ describe('query routing', () => {
     expect(route('What is the RBI policy outlook?')).toBe('factual_lookup');
   });
 
+  it('keeps a filing-backed multi-year deep dive analytical', () => {
+    expect(route('Deep dive on Reliance revenue, profit, margins, debt and capex over five years, connecting the numbers to major events and filings.'))
+      .toBe('financial_analysis');
+  });
+
+  it('adds named peers to a comparison inherited from an open company world', () => {
+    const plan = buildDataPlan(
+      'Compare TCS with Infosys, HCLTech, Wipro and Accenture on growth, margins and valuation.',
+      { declared: { kind: 'company', references: ['TCS'] } },
+    );
+    expect(plan.references).toEqual(['TCS', 'Infosys', 'HCLTech', 'Wipro', 'Accenture']);
+    expect(plan.route).toBe('comparison');
+
+    const long = buildDataPlan(
+      'I am speaking to clients about TCS tomorrow. Build an investment view. Assess whether AI is creating revenue. Compare TCS with Infosys, HCLTech, Wipro and Accenture on growth, margins and valuation.',
+      { declared: { kind: 'company', references: ['TCS'] } },
+    );
+    expect(long.references).toEqual(['TCS', 'Infosys', 'HCLTech', 'Wipro', 'Accenture']);
+  });
+
+  it('retrieves API inputs for valuation and event-backed analysis', () => {
+    const plan = buildDataPlan('Analyze Reliance valuation and major events and filings', {
+      declared: { kind: 'company', references: ['Reliance'] },
+    });
+    expect(plan.datasets).toEqual(expect.arrayContaining(['quote', 'filings', 'events', 'corporate_actions']));
+    expect(plan.concepts).toEqual(expect.arrayContaining(['BasicEarningsPerShare', 'ebitda', 'TotalEquity']));
+  });
+
+  it('plans stock underperformance as a return-attribution job', () => {
+    const plan = buildDataPlan(
+      'Why has Infosys underperformed? Break the return into earnings growth, multiple compression and dividends over the last 3 years, and compare it with TCS, HCLTech and Wipro.',
+      { declared: { kind: 'company', references: ['INFY'] } },
+    );
+    expect(plan.references).toEqual(['INFY', 'TCS', 'HCLTech', 'Wipro']);
+    expect(plan.lookback_years).toBe(3);
+    expect(plan.datasets).toEqual(expect.arrayContaining(['prices', 'quote', 'corporate_actions']));
+    expect(plan.analysis_requirements).toEqual([
+      'security_price_return', 'peer_relative_return', 'earnings_revision_path', 'valuation_multiple_change',
+    ]);
+    expect(plan.concepts).toEqual(expect.arrayContaining(['ProfitAfterTax', 'BasicEarningsPerShare']));
+  });
+
   it('only demands facts when a measure and a company are both named', () => {
     expect(buildDataPlan('What is the RBI policy outlook?').requires_facts).toBe(false);
     expect(buildDataPlan('What is PAT?').requires_facts).toBe(false);
@@ -133,6 +175,12 @@ describe('plan execution', () => {
 });
 
 describe('marked retrieval plan', () => {
+  it('plans ownership comparisons as shareholding retrievals', () => {
+    const plan = buildDataPlan('Compare Promoter shareholder of reliance and infosys');
+    expect(plan.references).toEqual(['reliance', 'infosys']);
+    expect(plan.datasets).toEqual(['shareholding']);
+  });
+
   it('shapes a RetrievalPlan Marked accepts when it asks for one', () => {
     const plan = markedPlan(buildDataPlan('What was Infosys PAT in FY2025?'));
     expect(plan).toMatchObject({ route: 'exact', reference: 'Infosys', fiscal_year: 2025, period: 'annual', basis: 'consolidated' });
@@ -149,7 +197,7 @@ describe('marked retrieval plan', () => {
     }));
     expect(plan.concepts).not.toContain('net_margin');
     expect(plan.concepts).not.toContain('ebitda_margin');
-    expect(plan.concepts).toContain('Revenue');
+    expect(plan.concepts).toContain('BasicEarningsPerShare');
   });
 
   it('gives the server planner the resolved Company World subject', async () => {

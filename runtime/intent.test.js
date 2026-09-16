@@ -9,6 +9,7 @@ describe('research intent', () => {
 
   it('routes comparisons and broad India macro questions', () => {
     expect(classifyIntent('Compare TCS and Infosys').kind).toBe('compare');
+    expect(extractReferences('Compare Promoter shareholder of reliance and infosys')).toEqual(['reliance', 'infosys']);
     expect(classifyIntent('What is the RBI and inflation outlook?').kind).toBe('macro');
   });
 

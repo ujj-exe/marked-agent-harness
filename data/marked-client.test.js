@@ -53,16 +53,37 @@ describe('MarkedClient', () => {
     expect(result.data.price).toBe(1428.2);
   });
 
-  it('resolves a canonical company before fetching its instruments', async () => {
+  it('uses the backend company filter for normalized news', async () => {
+    let url;
+    const client = new MarkedClient({ apiKey: 'mk_test', fetchImpl: async requestUrl => {
+      url = requestUrl;
+      return response({ data: [] });
+    }});
+    await client.news({ company: 'RELIANCE', topic: 'rates', region: 'india' });
+    expect(url).toBe('https://api.marked.run/v1/news?company=RELIANCE&topic=rates&region=india');
+  });
+
+  it('reads an indexed filing by document id', async () => {
+    let url;
+    const client = new MarkedClient({ fetchImpl: async requestUrl => {
+      url = requestUrl;
+      return response({ data: { document_id: 'doc_1', sections: [] } });
+    }});
+    await client.filing('doc_1', { sections: 40 });
+    expect(url).toBe('https://api.marked.run/v1/filings/doc_1?sections=40');
+  });
+
+  it('hydrates the canonical company so worlds receive its sector and securities', async () => {
     const calls = [];
     const client = new MarkedClient({ apiKey: 'mk_test', fetchImpl: async (url, options) => {
       calls.push({ url, options });
       if (url.endsWith('/v1/search')) return response({ data: [{ kind: 'company', company_id: 'co_ril', common_name: 'Reliance Industries', legal_name: 'Reliance Industries Limited', isin: 'INE002A01018' }] });
-      if (url.includes('/v1/instruments')) return response({ data: [{ security_id: 'sec_ril_nse', company_id: 'co_ril', symbol: 'RELIANCE', exchange: 'NSE', isin: 'INE002A01018', instrument_type: 'EQUITY' }] });
+      if (url.endsWith('/api/v1/companies/co_ril')) return response({ data: { company_id: 'co_ril', common_name: 'Reliance Industries', sector: 'Oil Gas & Consumable Fuels', securities: [{ security_id: 'sec_ril_nse', company_id: 'co_ril', symbol: 'RELIANCE', exchange: 'NSE', isin: 'INE002A01018', instrument_type: 'EQUITY' }] } });
       throw new Error(`unexpected request: ${url}`);
     }});
     const entity = await client.resolveCompany('Reliance');
     expect(entity.company.company_id).toBe('co_ril');
+    expect(entity.company.sector).toBe('Oil Gas & Consumable Fuels');
     expect(entity.securities[0]).toMatchObject({ security_id: 'sec_ril_nse', symbol: 'RELIANCE', exchange: 'NSE' });
     expect(calls).toHaveLength(2);
   });
@@ -70,11 +91,11 @@ describe('MarkedClient', () => {
   it('resolves a security hit such as a BSE scrip to its canonical company', async () => {
     const client = new MarkedClient({ apiKey: 'mk_test', fetchImpl: async url => {
       if (url.endsWith('/v1/search')) return response({ data: [{ kind: 'security', company_id: 'co_ril', title: 'RELIANCE', subtitle: 'BSE CASH EQ' }] });
-      if (url.includes('/v1/instruments')) return response({ data: [{ company_id: 'co_ril', symbol: 'RELIANCE', exchange: 'BSE', exchange_code: '500325', segment: 'CASH', instrument_type: 'EQ' }] });
+      if (url.endsWith('/api/v1/companies/co_ril')) return response({ data: { company_id: 'co_ril', common_name: 'Reliance Industries', sector: 'Oil Gas & Consumable Fuels', securities: [{ company_id: 'co_ril', symbol: 'RELIANCE', exchange: 'BSE', exchange_code: '500325', segment: 'CASH', instrument_type: 'EQ' }] } });
       throw new Error(`unexpected request: ${url}`);
     }});
     const entity = await client.resolveCompany('BSE:500325');
-    expect(entity.company).toMatchObject({ company_id: 'co_ril', common_name: 'RELIANCE' });
+    expect(entity.company).toMatchObject({ company_id: 'co_ril', common_name: 'Reliance Industries' });
     expect(entity.securities[0]).toMatchObject({ exchange: 'BSE', exchange_code: '500325' });
   });
 
@@ -85,7 +106,7 @@ describe('MarkedClient', () => {
         { kind: 'company', company_id: 'co_ril', title: 'Reliance Industries' },
         { kind: 'security', company_id: 'co_ril', title: 'RELIANCE', subtitle: 'NSE CASH EQ' },
       ] });
-      if (url.includes('/v1/instruments')) return response({ data: [{ company_id: 'co_ril', symbol: 'RELIANCE', exchange: 'NSE' }] });
+      if (url.endsWith('/api/v1/companies/co_ril')) return response({ data: { company_id: 'co_ril', common_name: 'Reliance Industries', sector: 'Oil Gas & Consumable Fuels', securities: [{ company_id: 'co_ril', symbol: 'RELIANCE', exchange: 'NSE' }] } });
       throw new Error(`unexpected request: ${url}`);
     }});
     const entity = await client.resolveCompany('reliance');

@@ -337,7 +337,8 @@ export function renderBlock(block, width) {
  */
 export function renderBlocks(blocks, width = 80) {
   if (!Array.isArray(blocks) || blocks.length === 0) return '';
-  return blocks.map(block => renderBlock(block, width)).join('\n');
+  return blocks.map(block => renderBlock(block, width)).join('\n')
+    .replace(/(^|[^A-Z0-9_])(\[E\d{1,4}\]|E\d{1,4})(?![A-Z0-9_])/gim, '$1\x1b[7;1m$2\x1b[22;27m');
 }
 
 // ── Backward compat: preset → blocks ─────────────────────────────────────────

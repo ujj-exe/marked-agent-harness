@@ -1287,10 +1287,20 @@ function padCenter(s, width) {
   return " ".repeat(left) + s + " ".repeat(right);
 }
 function wordWrap(text, maxLen) {
+  maxLen = Math.max(1, Math.floor(maxLen));
   const words = String(text).split(" ");
   const lines = [];
   let cur = "";
-  for (const word of words) {
+  for (let word of words) {
+    while (word.length > maxLen) {
+      if (cur) {
+        lines.push(cur);
+        cur = "";
+      }
+      lines.push(word.slice(0, maxLen));
+      word = word.slice(maxLen);
+    }
+    if (!word) continue;
     if (cur === "") {
       cur = word;
     } else if ((cur + " " + word).length <= maxLen) {
@@ -2766,8 +2776,9 @@ function renderSectionBoxed(section, width) {
       lines.push(boxEmpty(width));
       lines.push(boxDivider(width, "CATALYSTS"));
       for (const catalyst of items) {
-        const catalystLine = pc("positive", "\u2726 ") + pc("data", String(catalyst));
-        lines.push(boxRow(catalystLine, width));
+        for (const [index, text] of wordWrap(String(catalyst), width - 6).entries()) {
+          lines.push(boxRow(pc("positive", `${index ? "  " : "\u2726 "}${renderMarkdownInline(text)}`), width));
+        }
       }
       break;
     }
@@ -2777,8 +2788,37 @@ function renderSectionBoxed(section, width) {
       lines.push(boxEmpty(width));
       lines.push(boxDivider(width, "RISK FACTORS"));
       for (const risk of items) {
-        const riskLine = pc("warning", "\u26A0 ") + pc("data", String(risk));
-        lines.push(boxRow(riskLine, width));
+        for (const [index, text] of wordWrap(String(risk), width - 6).entries()) {
+          lines.push(boxRow(pc("warning", `${index ? "  " : "\u26A0 "}${renderMarkdownInline(text)}`), width));
+        }
+      }
+      break;
+    }
+    case "bull_case":
+    case "bear_case": {
+      const { items } = section;
+      if (!Array.isArray(items) || items.length === 0) break;
+      const bull = section.type === "bull_case";
+      lines.push(boxEmpty(width));
+      lines.push(boxDivider(width, bull ? "BULL CASE" : "BEAR CASE"));
+      for (const item of items) {
+        for (const [index, text] of wordWrap(String(item), width - 6).entries()) {
+          lines.push(boxRow(pc(bull ? "positive" : "negative", `${index ? "  " : bull ? "+ " : "\u2212 "}${renderMarkdownInline(text)}`), width));
+        }
+      }
+      break;
+    }
+    case "facts":
+    case "interpretation": {
+      const { items } = section;
+      if (!Array.isArray(items) || items.length === 0) break;
+      lines.push(boxEmpty(width));
+      lines.push(boxDivider(width, section.type === "facts" ? "FACTS" : "INTERPRETATION"));
+      const innerW = width - 6;
+      for (const item of items) {
+        for (const [index, text] of wordWrap(String(item), innerW).entries()) {
+          lines.push(boxRow(pc("data", `${index ? "  " : "\u2022 "}${renderMarkdownInline(text)}`), width));
+        }
       }
       break;
     }
@@ -3783,6 +3823,7 @@ var tui = {
   helpVisible: false,
   // Runtime query prompt
   queryInput: "",
+  promptRows: 3,
   overlayBackdrop: null,
   // What the next question is about — the open Company World, when there is
   // one. Shown on the command line's rule so the scope is never a guess.
@@ -4239,6 +4280,15 @@ function renderVerdictPanel(data, width, _panelWarnings) {
   const useBoxed = data.variant === "boxed";
   if (!useBoxed) {
     const vLines = [];
+    const pushList = (title, items, bullet, role = "data") => {
+      if (!Array.isArray(items) || !items.length) return;
+      vLines.push(pc("label", title));
+      for (const item of items) {
+        for (const [index, line] of wordWrap(String(item), Math.max(1, width - 2)).entries()) {
+          vLines.push(pc(role, `${index ? "  " : bullet}${renderMarkdownInline(line)}`));
+        }
+      }
+    };
     if (data.title) vLines.push(pc("accent", data.title));
     if (Array.isArray(data.sections)) {
       for (const section of data.sections) {
@@ -4261,24 +4311,37 @@ function renderVerdictPanel(data, width, _panelWarnings) {
           case "thesis": {
             const { text } = section;
             if (!text) break;
+            vLines.push(pc("label", "INVESTMENT VIEW"));
             for (const line of wordWrap(text, width)) {
               vLines.push(pc("data", renderMarkdownInline(line)));
             }
             break;
           }
           case "catalysts": {
-            const { items } = section;
-            if (!Array.isArray(items)) break;
-            for (const catalyst of items) {
-              vLines.push(pc("positive", "\u2726 ") + pc("data", String(catalyst)));
-            }
+            pushList("CATALYSTS", section.items, "\u2726 ", "positive");
             break;
           }
           case "risks": {
+            pushList("RISKS", section.items, "\u26A0 ", "warning");
+            break;
+          }
+          case "bull_case": {
+            pushList("BULL CASE", section.items, "+ ", "positive");
+            break;
+          }
+          case "bear_case": {
+            pushList("BEAR CASE", section.items, "\u2212 ", "negative");
+            break;
+          }
+          case "facts":
+          case "interpretation": {
             const { items } = section;
-            if (!Array.isArray(items)) break;
-            for (const risk of items) {
-              vLines.push(pc("warning", "\u26A0 ") + pc("data", String(risk)));
+            if (!Array.isArray(items) || !items.length) break;
+            vLines.push(pc("label", section.type === "facts" ? "FACTS" : "INTERPRETATION"));
+            for (const item of items) {
+              for (const [index, line] of wordWrap(String(item), Math.max(1, width - 2)).entries()) {
+                vLines.push(pc("data", `${index ? "  " : "\u2022 "}${renderMarkdownInline(line)}`));
+              }
             }
             break;
           }
@@ -4322,7 +4385,7 @@ function renderVerdictPanel(data, width, _panelWarnings) {
         }
       }
       for (const warnMsg of _panelWarnings) {
-        vLines.push(pc("warning", warnMsg));
+        for (const line of wordWrap(String(warnMsg), width)) vLines.push(pc("warning", line));
       }
       return vLines.join("\n");
     }
@@ -4691,7 +4754,7 @@ function renderBlock(block, width) {
 }
 function renderBlocks(blocks, width = 80) {
   if (!Array.isArray(blocks) || blocks.length === 0) return "";
-  return blocks.map((block) => renderBlock(block, width)).join("\n");
+  return blocks.map((block) => renderBlock(block, width)).join("\n").replace(/(^|[^A-Z0-9_])(\[E\d{1,4}\]|E\d{1,4})(?![A-Z0-9_])/gim, "$1\x1B[7;1m$2\x1B[22;27m");
 }
 function presetToBlocks(layout, panels) {
   switch (layout) {
@@ -4908,15 +4971,27 @@ function highlightCommand(value) {
   if (!match || !DESK_COMMANDS.has(match[1].toLowerCase())) return value;
   return `${BRAND}${BOLD2}/${match[1]}${RESET2}${match[2] ?? ""}`;
 }
-function renderQueryOverlay(width, value = "") {
-  const displayValue = /^\/marked\s+\S+$/.test(value) ? value.replace(/^(\/marked\s+)\S+$/, (_match, prefix) => `${prefix}${"\u2022".repeat(value.length - prefix.length)}`) : value;
+function renderQueryLines(width, value = "", maxLines = 1) {
+  const displayValue = /^\/marked\s+\S+$/.test(value) ? value.replace(/^(\/marked\s+)\S+$/, (_match, prefix2) => `${prefix2}${"\u2022".repeat(value.length - prefix2.length)}`) : value;
   const ticker = tui.scope?.ticker;
   const label = ticker ? ` ${ticker} ` : " query ";
-  const field = `${LABEL}${label}${RESET2}${BRAND}\u203A${RESET2} ${highlightCommand(displayValue)}${BRAND}\u2588${RESET2}`;
-  return ansiTrunc(field, Math.max(1, width - 1));
+  const prefix = `${LABEL}${label}${RESET2}${BRAND}\u203A${RESET2} `;
+  const indent = " ".repeat(visLen(prefix));
+  const contentWidth = Math.max(1, width - visLen(prefix) - 1);
+  let wrapped = wordWrap(displayValue, contentWidth).flatMap((line) => line.length > contentWidth ? Array.from({ length: Math.ceil(line.length / contentWidth) }, (_, index) => line.slice(index * contentWidth, (index + 1) * contentWidth)) : [line]);
+  if (!wrapped.length) wrapped = [""];
+  if (wrapped.length > maxLines) {
+    wrapped = wrapped.slice(-maxLines);
+    wrapped[0] = `\u2026${wrapped[0].slice(1)}`;
+  }
+  return wrapped.map((line, index) => {
+    const start = index === 0 ? prefix : indent;
+    const cursor = index === wrapped.length - 1 ? `${BRAND}\u2588${RESET2}` : "";
+    return start + (index === 0 ? highlightCommand(line) : line) + cursor;
+  });
 }
 var PROMPT_ROWS = 3;
-function renderPromptBlock(width, value = "", context = void 0) {
+function renderPromptBlock(width, value = "", context = void 0, totalRows = process.stdout.rows ?? 24) {
   const s = tui.agentState;
   const running = s && (s.stage === "gathering" || s.stage === "analyzing" || s.stage === "resolving");
   const scopeSource = context === void 0 ? tui.scope : context;
@@ -4924,10 +4999,11 @@ function renderPromptBlock(width, value = "", context = void 0) {
   const scope = detail ? `${DIM2} ${detail} ${RESET2}` : "";
   const ruleWidth = Math.max(0, width - visLen(scope));
   const rule = `${DIM2}${"\u2500".repeat(ruleWidth)}${RESET2}${scope}`;
-  const field = renderQueryOverlay(Math.max(1, width - 1), value);
+  const maxFieldRows = Math.max(1, Math.floor(totalRows / 2) - 2);
+  const fields = renderQueryLines(Math.max(1, width - 1), value, maxFieldRows);
   const hints = running ? [`${BRAND}\u25B8\u25B8${RESET2} ${DIM2}working${RESET2}`, "^C cancel", "PgUp/Dn scroll"] : value ? [`${BRAND}\u25B8\u25B8${RESET2} ${DIM2}\u23CE to ask${RESET2}`, "^C clear", "^G help"] : [`${BRAND}\u25B8\u25B8${RESET2} ${DIM2}type to ask${RESET2}`, "/help", "^S save", "^O load", "^D quit"];
   const hint = hints[0] + `${DIM2}` + hints.slice(1).map((part) => `  ${part}`).join("") + `${RESET2}`;
-  return [rule, field, ansiTrunc(hint, width)];
+  return [rule, ...fields, ansiTrunc(hint, width)];
 }
 function runLayout(layoutOrBlocks, panels, width, focused, rows = null) {
   try {
@@ -4937,13 +5013,12 @@ function runLayout(layoutOrBlocks, panels, width, focused, rows = null) {
     return `${DIM2}\u26A0 Render error: ${err.message}${RESET2}`;
   }
 }
-var CHROME_ROWS = 2 + PROMPT_ROWS;
 function fillHeight(blocks, width, rows) {
   const once = renderBlocks(blocks, width);
   if (!rows || !Array.isArray(blocks)) return once;
   const growable = findGrowable(blocks);
   if (!growable) return once;
-  const available = rows - CHROME_ROWS;
+  const available = rows - 2 - renderPromptBlock(width, tui.queryInput ?? "", tui.scope ?? null, rows).length;
   const used = once.split("\n").length;
   const slack = available - used;
   if (slack < 2) return once;
@@ -5116,10 +5191,10 @@ function applyShimmer(content) {
   });
 }
 var _animTimer = null;
-function footerRow(totalLines, rows) {
-  const rowsForContent = rows - PROMPT_ROWS;
+function footerRow(totalLines, rows, promptRows = tui.promptRows ?? PROMPT_ROWS) {
+  const rowsForContent = rows - promptRows;
   if (totalLines <= rowsForContent) return totalLines;
-  return rows - PROMPT_ROWS - 1;
+  return rows - promptRows - 1;
 }
 function startRenderAnimation() {
   stopRenderAnimation();
@@ -5196,16 +5271,18 @@ function paintWithScroll(clear = true) {
   const totalLines = allLines.length;
   allLines[0] = buildHeader(w);
   displayContent = allLines.join("\n");
-  const promptBlock = renderPromptBlock(w, tui.queryInput ?? "", tui.scope ?? null);
-  const paintPrompt = () => promptBlock.map((line, index) => `\x1B[${rows - PROMPT_ROWS + 1 + index};1H\x1B[2K${line}`).join("");
-  const rowsForContent = rows - PROMPT_ROWS;
+  const promptBlock = renderPromptBlock(w, tui.queryInput ?? "", tui.scope ?? null, rows);
+  const promptRows = promptBlock.length;
+  tui.promptRows = promptRows;
+  const paintPrompt = () => promptBlock.map((line, index) => `\x1B[${rows - promptRows + 1 + index};1H\x1B[2K${line}`).join("");
+  const rowsForContent = rows - promptRows;
   if (totalLines <= rowsForContent) {
     if (clear) {
       process.stdout.write("\x1B[2J\x1B[H" + displayContent + paintPrompt());
     } else {
       const padded = allLines.map((l) => l + " ".repeat(Math.max(0, w - visLen(l)))).join("\n");
       process.stdout.write("\x1B[H" + padded);
-      for (let r = totalLines + 1; r <= rows - PROMPT_ROWS; r++) {
+      for (let r = totalLines + 1; r <= rows - promptRows; r++) {
         process.stdout.write(`\x1B[${r};1H\x1B[2K`);
       }
       process.stdout.write(paintPrompt());
@@ -5215,7 +5292,7 @@ function paintWithScroll(clear = true) {
   const stickyLine = allLines[0];
   const bodyLines = allLines.slice(1, allLines.length - 1);
   const footerLine = allLines[allLines.length - 1];
-  const bodyRows = rows - 3 - PROMPT_ROWS;
+  const bodyRows = Math.max(0, rows - 3 - promptRows);
   const maxOffset = Math.max(0, bodyLines.length - bodyRows);
   tui.scrollOffset = Math.max(0, Math.min(tui.scrollOffset, maxOffset));
   const offset = tui.scrollOffset;
@@ -5361,7 +5438,7 @@ function listReports() {
 }
 
 // terminal/app.js
-var getWidth = () => Math.min(process.stdout.columns ?? 80, 200);
+var getWidth = () => process.stdout.columns ?? 80;
 var getHeight = () => process.stdout.rows ?? 24;
 tui.phase = "splash";
 tui.splashMsg = "Starting...";
@@ -5536,7 +5613,8 @@ function onSplash(payload) {
 }
 function drawQueryPrompt() {
   const rows = getHeight();
-  const block = renderPromptBlock(getWidth(), tui.queryInput, tui.scope ?? null);
+  const block = renderPromptBlock(getWidth(), tui.queryInput, tui.scope ?? null, rows);
+  if (block.length !== tui.promptRows) return paintWithScroll(false);
   process.stdout.write(block.map((line, index) => `\x1B[${rows - block.length + 1 + index};1H\x1B[2K${line}`).join(""));
 }
 function clearPrompt() {

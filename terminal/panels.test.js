@@ -278,6 +278,25 @@ describe('renderPanel — schema coercion', () => {
 // ── Verdict variants ──────────────────────────────────────────────────────────
 
 describe('renderPanel — verdict variants', () => {
+  it('wraps every broker-note section within the panel width', () => {
+    const width = 42;
+    const data = {
+      suppressWarnings: true,
+      sections: [
+        { type: 'conviction', value: 'neutral' },
+        { type: 'facts', items: [`Revenue improved ${'[ev_1]'.repeat(20)}`] },
+        { type: 'bull_case', items: ['A sustained demand recovery improves growth and margins materially.'] },
+        { type: 'bear_case', items: ['Pricing pressure persists and employee costs absorb productivity gains.'] },
+        { type: 'catalysts', items: ['Large AI contracts convert into reported recurring revenue.'] },
+        { type: 'risks', items: ['The evidence remains incomplete across several operating indicators.'] },
+      ],
+    };
+    const lines = strip(renderPanel('verdict', data, width)).split('\n');
+    expect(lines.every(line => line.length <= width)).toBe(true);
+    expect(lines.join('\n')).toContain('BULL CASE');
+    expect(lines.join('\n')).toContain('BEAR CASE');
+  });
+
   it('variant: "plain" renders without box wrapper', () => {
     const data = { ...VERDICT_DATA, variant: 'plain' };
     const result = strip(renderPanel('verdict', data, 80));

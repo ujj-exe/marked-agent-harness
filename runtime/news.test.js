@@ -4,7 +4,7 @@ import { sortNews, newsBlocks, parseNewsCommand } from './news.js';
 const item = (over = {}) => ({
   headline: 'Something happened', publisher: 'The Economic Times',
   source_tier: 'press', published_at: '2026-09-15T18:31:00Z',
-  topics: ['crude', 'trade'], url: 'https://example.com/a', ...over,
+  topics: ['crude', 'trade'], regions: ['middle_east'], url: 'https://example.com/a', ...over,
 });
 const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '');
 const table = blocks => blocks.find(b => b.table)?.table;
@@ -40,8 +40,9 @@ describe('newsBlocks', () => {
     expect(press).toBe('prs');
   });
 
-  it('shows topics so a reader can see why an item is here', () => {
+  it('shows topic and region tags so a reader can see why an item is here', () => {
     expect(table(newsBlocks([item()])).rows[0].cells[4]).toContain('crude');
+    expect(table(newsBlocks([item()])).rows[0].cells[4]).toContain('middle_east');
   });
 
   it('says there is none rather than rendering a bare header', () => {

@@ -1,5 +1,6 @@
 const LEADING_WORDS = /^(?:analyze|analyse|research|compare|contrast|study|look at|overview|fundamentals|financials|why did|what happened to|what changed in)\b/i;
 const QUERY_WORDS = /\b(?:what|how|why|when|from|between|grow|growth|increase|decrease|profit|pat|revenue|earnings|sales|margin|debt|financial|year|last|previous|compare|versus|vs\.?|fy\d{2,4})\b/i;
+const OWNERSHIP_PREFIX = /^(?:(?:promoters?|fii|dii|mutual funds?|public)\s+)?(?:shareholders?|shareholding|holdings?|stake|ownership)\s+(?:of|in|between)\s+/i;
 
 export function classifyIntent(question) {
   const text = String(question).trim();
@@ -44,6 +45,7 @@ export function extractReferences(question) {
   return query
     .split(/\s+(?:vs\.?|versus|and)\s+/i)
     .map(item => item
+      .replace(OWNERSHIP_PREFIX, '')
       .replace(/\s+(?:fall|fell|rise|rose|drop|dropped|jump|jumped|move|moved|underperform|outperform|decline|declined|crash|rally)\b.*$/i, '')
       .replace(/[?.!,;:]+$/, '')
       .trim())

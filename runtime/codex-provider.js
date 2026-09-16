@@ -18,7 +18,9 @@ export class CodexProvider extends AgentProvider {
     try {
       await runProcess(this.options.command || 'codex', [
         'exec',
-        ...(this.options.model ? ['--model', this.options.model] : []), '--ephemeral', '--ignore-user-config', '--sandbox', 'read-only', '--skip-git-repo-check', '--color', 'never',
+        ...(this.options.model ? ['--model', this.options.model] : []),
+        ...(options.webSearch ? ['--enable', 'standalone_web_search'] : []),
+        '--ephemeral', '--ignore-user-config', '--sandbox', 'read-only', '--skip-git-repo-check', '--color', 'never',
         '--output-schema', schemaPath, '--output-last-message', outputPath, '-C', options.cwd || process.cwd(), '-',
       ], { cwd: options.cwd, input: prompt, timeoutMs: options.timeoutMs, signal: this.controller.signal });
       return parseJsonOutput(fs.readFileSync(outputPath, 'utf8'));
