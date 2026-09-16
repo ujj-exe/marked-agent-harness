@@ -58,7 +58,13 @@ export class MarkedClient {
     let payload;
     try { payload = text ? JSON.parse(text) : null; } catch { payload = { error: text }; }
     if (!response.ok) {
-      throw new MarkedApiError(payload?.detail || payload?.error || `Marked API request failed (${response.status})`, {
+      const detail = payload?.detail || payload?.error;
+      const message = typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map(item => item?.msg || JSON.stringify(item)).join('; ')
+          : detail ? JSON.stringify(detail) : `Marked API request failed (${response.status})`;
+      throw new MarkedApiError(message, {
         status: response.status,
         code: payload?.code,
         details: payload,

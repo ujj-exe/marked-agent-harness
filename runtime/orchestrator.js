@@ -402,7 +402,6 @@ export class MarkedOrchestrator {
           marketCap: Number(quote.market_cap) || 0,
         },
       })),
-      ...(quotes.length ? [{ text: quotes.map(({ quote }) => quoteLine(quote)).join('\n'), id: 'quote-detail' }] : []),
       { divider: label.toUpperCase() },
       ...(executed.facts.length ? [{ table: factTable(executed.facts) }] : []),
       ...companies.flatMap((company, index) => conceptCharts(company, plan, index)),

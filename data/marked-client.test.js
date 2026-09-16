@@ -35,6 +35,13 @@ describe('MarkedClient', () => {
     expect(attempts).toBe(2);
   });
 
+  it('renders structured API validation errors as text', async () => {
+    const client = new MarkedClient({ fetchImpl: async () => response({
+      detail: [{ msg: 'unsupported concepts: net_margin' }],
+    }, 422) });
+    await expect(client.query({ query: 'test' })).rejects.toThrow('unsupported concepts: net_margin');
+  });
+
   it('calls the canonical live quote endpoint', async () => {
     let request;
     const client = new MarkedClient({ apiKey: 'mk_test', fetchImpl: async (url, options) => {

@@ -182,11 +182,14 @@ export function buildDataPlan(question, { temporal = null, asOf = null, declared
 
 /** The same plan shaped as Marked's RetrievalPlan, for POST /v1/query. */
 export function markedPlan(plan) {
-  if (!plan.references.length || !plan.concepts.length) return null;
+  // The API's RetrievalPlan accepts reported concepts only. Derived ratios are
+  // fetched from /v1/financial-metrics and must not leak into this retry.
+  const concepts = plan.concepts.filter(id => !isDerived(id));
+  if (!plan.references.length || !concepts.length) return null;
   return {
     route: plan.references.length > 1 ? 'hybrid' : 'exact',
     reference: plan.references[0],
-    concepts: plan.concepts.slice(0, 20),
+    concepts: concepts.slice(0, 20),
     fiscal_year: plan.fiscal_years.length === 1 ? plan.fiscal_years[0] : null,
     period: plan.period,
     basis: plan.basis,
@@ -557,9 +560,14 @@ export async function resolvePlan(data, question, { temporal = null, asOf = null
   local.candidates = { local: { references: local.references, concepts: local.concepts, fiscal_years: local.fiscal_years, route: local.route }, marked: null };
   if (typeof data?.query !== 'function') return local;
   try {
+    // A Company World has already resolved its subject. Give that context to
+    // the server planner without changing the user's saved question.
+    const planningQuestion = declared?.kind === 'company' && declared.references?.length
+      ? `${declared.references[0]}: ${question}`
+      : String(question);
     // One call plans and carries the narrative evidence. Asking twice would cost
     // two requests against the workspace quota for the same answer.
-    const response = await data.query({ query: String(question), limit: 30 });
+    const response = await data.query({ query: planningQuestion, limit: 30 });
     const body = response?.data;
     if (!body || body.status === 'needs_plan' || !body.plan) return local;
     const merged = mergePlans(local, body.plan);

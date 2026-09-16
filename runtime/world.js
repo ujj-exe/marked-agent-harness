@@ -540,7 +540,7 @@ function researchBlocks(world) {
   }
   return [
     { divider: 'RESEARCH' },
-    ...verdictPanel(world.research.result, world.research.warnings ?? [], world.research.mode ?? 'research'),
+    { panel: 'verdict', id: 'world-research-verdict', data: verdictPanel(world.research.result, world.research.warnings ?? [], world.research.mode ?? 'research') },
   ];
 }
 

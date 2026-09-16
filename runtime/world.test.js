@@ -136,6 +136,13 @@ describe('worldBlocks', () => {
     const blocks = worldBlocks(world(), 'research');
     expect(texts(blocks).join(' ')).toContain('No research run');
   });
+
+  it('renders a completed research result in its verdict panel', () => {
+    const w = world();
+    w.research = { result: { summary: 'Valuation is unchanged.', conviction: 'neutral', risks: [] } };
+    expect(worldBlocks(w, 'research').find(block => block.id === 'world-research-verdict')?.data.thesis)
+      .toBe('Valuation is unchanged.');
+  });
 });
 
 describe('keyMetricsTable', () => {

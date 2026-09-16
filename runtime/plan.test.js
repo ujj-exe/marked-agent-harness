@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDataPlan, derivedGrowth, executeDataPlan, extractEntities, extractFiscalYears, markedPlan } from './plan.js';
+import { buildDataPlan, derivedGrowth, executeDataPlan, extractEntities, extractFiscalYears, markedPlan, resolvePlan } from './plan.js';
 import { extractConcepts, isDerived, resolveConcept } from '../data/concepts.js';
 
 describe('financial metric normalization', () => {
@@ -141,6 +141,26 @@ describe('marked retrieval plan', () => {
 
   it('offers no plan when there is nothing concrete to plan with', () => {
     expect(markedPlan(buildDataPlan('What is the RBI policy outlook?'))).toBeNull();
+  });
+
+  it('keeps derived ratios out of the reported-concept API contract', () => {
+    const plan = markedPlan(buildDataPlan('how did valuation change year on year', {
+      declared: { kind: 'company', references: ['ASIANPAINT'] },
+    }));
+    expect(plan.concepts).not.toContain('net_margin');
+    expect(plan.concepts).not.toContain('ebitda_margin');
+    expect(plan.concepts).toContain('Revenue');
+  });
+
+  it('gives the server planner the resolved Company World subject', async () => {
+    let request;
+    await resolvePlan({ query: async body => {
+      request = body;
+      return { data: { status: 'needs_plan' } };
+    } }, 'how did valuation change year on year', {
+      declared: { kind: 'company', references: ['ASIANPAINT'] },
+    });
+    expect(request.query).toBe('ASIANPAINT: how did valuation change year on year');
   });
 });
 

@@ -334,6 +334,22 @@ describe('research packet guarantee', () => {
     expect(h.saved.evidence.some(item => item.data_type === 'price')).toBe(false);
   });
 
+  it('renders a quote dataset without a separate text formatter', async () => {
+    const company = COMPANIES.RELIANCE;
+    const h = harness({
+      resolveCompany: async () => ({
+        company: { company_id: company.id, common_name: company.name },
+        securities: [{ exchange: 'NSE', symbol: company.ticker, segment: 'CASH' }],
+      }),
+      prices: async () => ({ data: { price: 1500, change_percent: 1.2, market_cap: 10_000 } }),
+      financials: async () => ({ data: [] }),
+      query: async () => ({ data: { status: 'needs_plan' } }),
+    });
+    await expect(h.orchestrator.run('Reliance market cap')).resolves.toBeTruthy();
+    expect(h.renders.flatMap(render => render.blocks || []).find(block => block.id === 'quote-0')?.data)
+      .toMatchObject({ ticker: 'RELIANCE', price: 1500, marketCap: 10_000 });
+  });
+
   it('renders a DATA GAP and never launches the worker when Marked has no such fact', async () => {
     let launched = false;
     const data = factClient([]);
