@@ -377,6 +377,8 @@ Installation walks four steps in the terminal itself: global or
 per-repository configuration, your API key entered hidden and checked against
 the API, a choice of Claude Code CLI, Codex CLI or an OpenAI Codex
 subscription, and a model. Re-run it any time with `marked-onboard`.
+Re-running the installer updates a clean managed checkout; if that checkout was
+modified, it is preserved beside the new installation as a timestamped backup.
 
 To drive it directly:
 

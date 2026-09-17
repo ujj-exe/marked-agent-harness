@@ -14,3 +14,11 @@ def test_install_script_is_posix_shell_and_bootstraps_onboard():
     assert 'main "$@" </dev/tty' in text
     assert "Installing the agent harness" in text
     assert "MARKED_INSTALL_REEXEC" not in text
+
+
+def test_install_script_preserves_a_dirty_checkout_before_updating():
+    text = (Path(__file__).parents[1] / "install.sh").read_text()
+    dirty = text.index('status --porcelain')
+    backup = text.index('mv "$INSTALL_DIR" "$BACKUP_DIR"')
+    clone = text.index('git clone --quiet --depth 1 --branch "$REF"', backup)
+    assert dirty < backup < clone

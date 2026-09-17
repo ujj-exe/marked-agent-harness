@@ -37,7 +37,14 @@ main() {
     printf '  [2/2] Installing the Marked terminal…\n'
     mkdir -p "$(dirname "$INSTALL_DIR")"
     if [ -d "$INSTALL_DIR/.git" ]; then
-        git -C "$INSTALL_DIR" pull --quiet --ff-only origin "$REF"
+        if [ -n "$(git -C "$INSTALL_DIR" status --porcelain)" ]; then
+            BACKUP_DIR="${INSTALL_DIR}.backup-$(date +%Y%m%d%H%M%S)-$$"
+            mv "$INSTALL_DIR" "$BACKUP_DIR"
+            printf '  Local changes preserved at %s\n' "$BACKUP_DIR"
+            git clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$INSTALL_DIR"
+        else
+            git -C "$INSTALL_DIR" pull --quiet --ff-only origin "$REF"
+        fi
     elif [ -e "$INSTALL_DIR" ]; then
         printf '%s\n' "Cannot install: $INSTALL_DIR already exists and is not a Git checkout." >&2
         exit 1
