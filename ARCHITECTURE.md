@@ -33,8 +33,8 @@ Evidence: evidence_id, company_id, document, source URL, period, basis, known_at
 ```
 
 The client accepts Marked's current response fields and keeps the raw record in
-`metadata`; it does not use Yahoo symbols, SEC CIKs or exchange symbols as the
-company identity.
+`metadata`; canonical company identity comes from Marked's own company and
+security identifiers rather than external vendor identifiers.
 
 `data/normalization.js` is the analyst-facing display boundary: raw facts become
 canonical labels, periods, basis, units and classifications (`reported metric`,

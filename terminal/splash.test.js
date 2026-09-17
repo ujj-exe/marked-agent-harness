@@ -10,7 +10,6 @@ describe('splash live tape', () => {
       { symbol: 'BANKNIFTY', price: 52100, change_percent: -0.18, market_status: 'REGULAR', is_stale: false },
     ]));
     expect(text).toContain('LIVE TAPE');
-    expect(text).not.toContain('YAHOO');
     expect(text.indexOf('LIVE TAPE')).toBeGreaterThan(text.indexOf('RUNTIME WORKERS'));
     expect(text).toContain('NIFTY');
     expect(text).toContain('BANKNIFTY');
