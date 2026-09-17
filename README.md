@@ -101,7 +101,7 @@ Inside Company World, `/overview`, `/financials`, `/ownership`, `/filings`,
 
 | Command | Purpose |
 | --- | --- |
-| `/analyst <company or question>` | Filings, fundamentals and deep research |
+| `/analyst <company>` | Filings, fundamentals and deep research |
 | `/compare <a> and <b>` | Like-for-like company comparison |
 | `/macro [question]` | RBI, inflation, liquidity, growth and rates |
 | `/sector <sector>` | Sector rotation, themes and relevant names |

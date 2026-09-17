@@ -8,6 +8,12 @@ dependencies = [
     "aiohttp==3.11.18",
 ]
 
+[project.urls]
+Homepage = "https://marked.run"
+Documentation = "https://docs.marked.run"
+Repository = "https://github.com/ujj-exe/marked-agent-harness"
+Issues = "https://github.com/ujj-exe/marked-agent-harness/issues"
+
 [dependency-groups]
 dev = ["pytest==8.4.2", "pytest-asyncio==1.2.0", "ruff==0.14.9"]
 
