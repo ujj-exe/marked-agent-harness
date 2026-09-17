@@ -23,7 +23,7 @@ import { fg, palette, BOLD, DIM, RESET } from '../src/index.js';
 const REVERSE = '\x1b[7m';
 import { computeMetrics } from '../data/metrics.js';
 import { buildSeries, seriesBlocks, resolveSeries, resolveRange, resolveTransform, buildComparison, comparisonBlocks } from './chart.js';
-import { evidenceDrawerBlocks, evidenceTable, refsFor, worldEvidence, parseEvidenceRef } from './evidence.js';
+import { evidenceDrawerBlocks, evidenceTable, refFor, refsFor, worldEvidence, parseEvidenceRef } from './evidence.js';
 import { valuationBlocks, riskBlocks } from './valuation.js';
 import { newsBlocks } from './news.js';
 
@@ -545,7 +545,12 @@ function researchBlocks(world) {
   }
   return [
     { divider: 'RESEARCH' },
-    { panel: 'verdict', id: 'world-research-verdict', data: verdictPanel(world.research.result, world.research.warnings ?? [], world.research.mode ?? 'research') },
+    { panel: 'verdict', id: 'world-research-verdict', data: verdictPanel(
+      world.research.result,
+      world.research.warnings ?? [],
+      world.research.mode ?? 'research',
+      id => refFor(world, id),
+    ) },
   ];
 }
 

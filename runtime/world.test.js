@@ -144,6 +144,17 @@ describe('worldBlocks', () => {
       .toBe('Valuation is unchanged.');
   });
 
+  it('renders model evidence ids as openable world references', () => {
+    const w = world();
+    w.evidence = [{ evidence_id: 'ev_495', data_type: 'financial_fact' }];
+    w.research = { result: {
+      summary: 'Revenue improved.', conviction: 'neutral', risks: [],
+      claims: [{ text: 'Revenue improved. [world_ev_495]', evidence_ids: ['world_ev_495'], classification: 'fact' }],
+    } };
+    const panel = worldBlocks(w, 'research').find(block => block.id === 'world-research-verdict');
+    expect(panel.data.sections.find(section => section.type === 'facts').items).toEqual(['Revenue improved. [E1]']);
+  });
+
   it('marks recent events with their evidence reference', () => {
     const evidence = Array.from({ length: 13 }, (_, index) => ({
       evidence_id: `ev_${index + 1}`,

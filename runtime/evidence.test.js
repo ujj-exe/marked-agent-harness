@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildEvidenceIndex, parseEvidenceRef, refFor, refsFor, evidenceDrawerBlocks, evidenceTable } from './evidence.js';
+import { buildEvidenceIndex, mergeWorldEvidence, parseEvidenceRef, refFor, refsFor, worldEvidence, evidenceDrawerBlocks, evidenceTable } from './evidence.js';
 
 const world = () => ({
   common_name: 'Reliance',
@@ -24,7 +24,20 @@ describe('references', () => {
   it('maps a canonical evidence id to its display reference', () => {
     const w = world();
     expect(refFor(w, 'ev_002')).toBe('E2');
+    expect(refFor(w, 'world_ev_002')).toBe('E2');
     expect(refFor(w, 'ev_missing')).toBeNull();
+  });
+
+  it('adds fresh research evidence without duplicating namespaced world evidence', () => {
+    const w = world();
+    worldEvidence(w);
+    mergeWorldEvidence(w, [
+      { evidence_id: 'world_ev_001', metric: 'Revenue' },
+      { evidence_id: 'web_01', data_type: 'web', source_url: 'https://example.com' },
+    ]);
+    expect(w.evidence).toHaveLength(3);
+    expect(refFor(w, 'world_ev_001')).toBe('E1');
+    expect(refFor(w, 'web_01')).toBe('E3');
   });
 
   it('resolves a list of ids, deduplicated and in order', () => {

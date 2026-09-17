@@ -11,7 +11,7 @@ import { createWorld, parseWorldCommand, worldBlocks, setChartView, worldScope, 
 import { parseCompare, compareBlocks } from './compare.js';
 import { parseMarketCommand, marketBlocks } from './market.js';
 import { parseNewsCommand, newsBlocks } from './news.js';
-import { worldEvidence } from './evidence.js';
+import { mergeWorldEvidence, worldEvidence } from './evidence.js';
 import { rememberWorld, restoreWorld, recentWorlds } from './world-state.js';
 import { TuiClient } from './tui-client.js';
 import { appendConversationTurn, createConversation, formatConversationHistory, loadConversation, saveConversation } from './session.js';
@@ -671,6 +671,7 @@ try {
         session = await orchestrator.run(question, {
           agentName: agent.name, asOf, conversation, plan,
           workspace: world,
+          suppressBlocks: Boolean(world),
           // Inside a world the company is settled, so the question inherits it
           // rather than being re-resolved from whatever name it happens to
           // contain. This is what lets "why did margins fall?" work at all.
@@ -702,6 +703,7 @@ try {
       if (world && session.result) {
         // The verdict belongs to this company, so it lands in its Research tab
         // instead of replacing the workspace the user is standing in.
+        mergeWorldEvidence(world, session.evidence);
         world.research = { result: session.result, warnings: session.validation_warnings, mode: session.mode };
         world.tab = 'research';
         await tui.render({ blocks: worldBlocks(world), meta: { as_of: world.as_of }, scope: worldScope(world) });

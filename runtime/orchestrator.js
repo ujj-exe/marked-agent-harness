@@ -877,13 +877,13 @@ export class MarkedOrchestrator {
 
     await this.tui.render({
       patch: true,
-      blocks: meaningful([
+      ...(suppressBlocks ? {} : { blocks: meaningful([
         { divider: mode.toUpperCase() },
         { panel: 'verdict', id: 'verdict', data: verdictPanel(checked.result, checked.warnings, mode) },
         // An empty SOURCES table is a heading over nothing. A quote has no
         // evidence rows, and printing the header anyway reads as a failure.
         ...(session.evidence.length ? [{ divider: 'SOURCES' }, { table: sourceTable(session.evidence) }] : []),
-      ]),
+      ]) }),
       _state: { stage: 'complete', agent: agentName, query: question, follow_ups: session.follow_ups, tools: { called: totalTools, total: totalTools, current: null } },
       meta: { as_of: asOf },
     });
@@ -1684,10 +1684,10 @@ function followUps(items = []) {
   }));
 }
 
-export function verdictPanel(result, warnings, mode = 'research') {
+export function verdictPanel(result, warnings, mode = 'research', displayRef = id => id) {
   const cite = claim => {
-    const text = String(claim.text).replace(/\s*(?:\[(?:ev|web)_\d+\])+/gi, '').trim();
-    const ids = [...new Set(claim.evidence_ids ?? [])];
+    const text = String(claim.text).replace(/\s*\[(?:(?:world_)?(?:ev|web)_[a-z0-9_]+)\]/gi, '').trim();
+    const ids = [...new Set(claim.evidence_ids ?? [])].map(displayRef).filter(Boolean);
     return `${text}${ids.length ? ` ${ids.map(id => `[${id}]`).join(' ')}` : ''}`;
   };
   if (['factual', 'event'].includes(mode)) {

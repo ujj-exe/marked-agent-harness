@@ -27,7 +27,13 @@ export function buildEvidenceIndex(world) {
     const entry = { ...record, ref };
     list.push(entry);
     byRef.set(ref.toUpperCase(), entry);
-    if (record.evidence_id) byEvidenceId.set(record.evidence_id, entry);
+    if (record.evidence_id) {
+      byEvidenceId.set(record.evidence_id, entry);
+      // Research packets namespace evidence already present in an open world
+      // so it cannot collide with freshly retrieved rows. Both ids must open
+      // the same user-facing E reference.
+      byEvidenceId.set(`world_${record.evidence_id}`, entry);
+    }
   });
   return { list, byRef, byEvidenceId };
 }
@@ -52,6 +58,21 @@ export function refsFor(world, evidenceIds = []) {
     if (ref && !seen.has(ref)) { seen.add(ref); refs.push(ref); }
   }
   return refs;
+}
+
+/** Add evidence retrieved by a world-scoped question to that world's drawer. */
+export function mergeWorldEvidence(world, evidence = []) {
+  const records = Array.isArray(world?.evidence) ? world.evidence : [];
+  const known = new Set(records.map(item => item?.evidence_id).filter(Boolean));
+  for (const item of evidence) {
+    const id = item?.evidence_id;
+    if (!id || id.startsWith('world_') || known.has(id)) continue;
+    records.push(item);
+    known.add(id);
+  }
+  world.evidence = records;
+  delete world._evidence;
+  return world;
 }
 
 /** Parse `E12`, `/e 12`, `e12` — the ways someone asks to see a source. */
