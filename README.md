@@ -1,6 +1,10 @@
 # Marked
 
 <p align="center">
+  <img src="assets/marked.svg" alt="Marked" width="300">
+</p>
+
+<p align="center">
   <strong>India-first, evidence-backed financial research in your terminal.</strong>
 </p>
 
