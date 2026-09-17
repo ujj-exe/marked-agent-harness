@@ -58,6 +58,9 @@ export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999, liveTape
   const mark  = `${pc}${BOLD}▐██${RESET}`;
   const spin  = `${pc}${SPINNER_FRAMES[pulseFrame % SPINNER_FRAMES.length]}${RESET}`;
   const vStr = `${BRAND}${VERSION.current}${RESET}`;
+  const status = /^update available/i.test(msg)
+    ? `${fg(palette('warning') || '#ffffff')}${BOLD}${msg}${RESET}`
+    : `${DIM}${msg}${RESET}`;
 
   const pad = (s) => {
     const vis = s.replace(/\x1b\[[0-9;]*m/g, '').length;
@@ -128,7 +131,7 @@ export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999, liveTape
     padToStatus(lines, maxRows);
     lines.push(`  ${DIM}type a company or a question${RESET}  ${DIM}·${RESET}  ${DIM}/model${RESET}  ${DIM}^O${RESET} ${DIM}load${RESET}  ${DIM}^G${RESET} ${DIM}help${RESET}  ${DIM}^D${RESET} ${DIM}quit${RESET}`);
     lines.push(L(
-      `  ${spin} ${DIM}${msg}${RESET}`,
+      `  ${spin} ${status}`,
       `${DIM}marked.run  ·  ${RESET}${mark}  `,
     ));
 
@@ -147,7 +150,7 @@ export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999, liveTape
 
     padToStatus(lines, maxRows);
     lines.push(`  ${DIM}type a company or a question${RESET}  ${DIM}·${RESET}  ${DIM}/model${RESET}  ${DIM}^O${RESET} ${DIM}load${RESET}  ${DIM}^G${RESET} ${DIM}help${RESET}  ${DIM}^D${RESET} ${DIM}quit${RESET}`);
-    lines.push(`  ${spin} ${DIM}${msg}${RESET}`);
+    lines.push(`  ${spin} ${status}`);
 
   // ── SMALL: brand + desk names only ─────────────────────────────────────
   } else if (maxRows >= 10) {
@@ -161,13 +164,13 @@ export function renderSplash(msg, width, pulseFrame = 0, maxRows = 999, liveTape
 
     padToStatus(lines, maxRows);
     lines.push(`  ${DIM}type to ask  /model  ^G help  ^D quit${RESET}`);
-    lines.push(`  ${spin} ${DIM}${msg}${RESET}`);
+    lines.push(`  ${spin} ${status}`);
 
   // ── TINY: just brand + spinner ─────────────────────────────────────────
   } else {
     lines.push(`  ${mark}  ${BRAND}${BOLD}MARKED${RESET}`);
     padToStatus(lines, maxRows, 0);
-    lines.push(`  ${spin}  ${DIM}${msg}${RESET}`);
+    lines.push(`  ${spin}  ${status}`);
   }
 
   return lines.join('\n');

@@ -4009,6 +4009,7 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999, liveTape = []) 
   const mark = `${pc2}${BOLD2}\u2590\u2588\u2588${RESET2}`;
   const spin = `${pc2}${SPINNER_FRAMES[pulseFrame % SPINNER_FRAMES.length]}${RESET2}`;
   const vStr = `${BRAND}${VERSION2.current}${RESET2}`;
+  const status = /^update available/i.test(msg) ? `${fg(palette("warning") || "#ffffff")}${BOLD2}${msg}${RESET2}` : `${DIM2}${msg}${RESET2}`;
   const pad = (s) => {
     const vis = s.replace(/\x1b\[[0-9;]*m/g, "").length;
     return " ".repeat(Math.max(0, Math.floor((width - vis) / 2))) + s;
@@ -4066,7 +4067,7 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999, liveTape = []) 
     padToStatus(lines, maxRows);
     lines.push(`  ${DIM2}type a company or a question${RESET2}  ${DIM2}\xB7${RESET2}  ${DIM2}/model${RESET2}  ${DIM2}^O${RESET2} ${DIM2}load${RESET2}  ${DIM2}^G${RESET2} ${DIM2}help${RESET2}  ${DIM2}^D${RESET2} ${DIM2}quit${RESET2}`);
     lines.push(L(
-      `  ${spin} ${DIM2}${msg}${RESET2}`,
+      `  ${spin} ${status}`,
       `${DIM2}marked.run  \xB7  ${RESET2}${mark}  `
     ));
   } else if (width >= 48 && maxRows >= 16) {
@@ -4082,7 +4083,7 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999, liveTape = []) 
     lines.push(sep());
     padToStatus(lines, maxRows);
     lines.push(`  ${DIM2}type a company or a question${RESET2}  ${DIM2}\xB7${RESET2}  ${DIM2}/model${RESET2}  ${DIM2}^O${RESET2} ${DIM2}load${RESET2}  ${DIM2}^G${RESET2} ${DIM2}help${RESET2}  ${DIM2}^D${RESET2} ${DIM2}quit${RESET2}`);
-    lines.push(`  ${spin} ${DIM2}${msg}${RESET2}`);
+    lines.push(`  ${spin} ${status}`);
   } else if (maxRows >= 10) {
     lines.push(`  ${mark}  ${BRAND}${BOLD2}MARKED${RESET2}  ${DIM2}The view that matters.${RESET2}`);
     lines.push(sep());
@@ -4092,11 +4093,11 @@ function renderSplash(msg, width, pulseFrame = 0, maxRows = 999, liveTape = []) 
     lines.push(sep());
     padToStatus(lines, maxRows);
     lines.push(`  ${DIM2}type to ask  /model  ^G help  ^D quit${RESET2}`);
-    lines.push(`  ${spin} ${DIM2}${msg}${RESET2}`);
+    lines.push(`  ${spin} ${status}`);
   } else {
     lines.push(`  ${mark}  ${BRAND}${BOLD2}MARKED${RESET2}`);
     padToStatus(lines, maxRows, 0);
-    lines.push(`  ${spin}  ${DIM2}${msg}${RESET2}`);
+    lines.push(`  ${spin}  ${status}`);
   }
   return lines.join("\n");
 }

@@ -60,6 +60,11 @@ main() {
     ln -sf "$INSTALL_DIR/bin/marked-onboard" "$BIN_DIR/marked-onboard"
     ln -sf "$INSTALL_DIR/bin/marked-chart" "$BIN_DIR/marked-chart"
 
+    if [ "${MARKED_SKIP_ONBOARD:-}" = "1" ]; then
+        printf '\n  ✓ Marked updated.\n'
+        exit 0
+    fi
+
     printf '\n  ✓ Installed. Starting onboarding…\n'
     exec "$BIN_DIR/marked" --onboard
 }

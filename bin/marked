@@ -7,4 +7,14 @@ while [ -L "$SOURCE" ]; do
   [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
 done
 ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+
+if [[ "${1:-}" == "--update" ]]; then
+  command -v curl >/dev/null 2>&1 || { echo "marked: curl is required to update." >&2; exit 1; }
+  UPDATE_SCRIPT="$(mktemp "${TMPDIR:-/tmp}/marked-update.XXXXXX")"
+  trap 'rm -f "$UPDATE_SCRIPT"' EXIT
+  curl -fsSL https://marked.run/install -o "$UPDATE_SCRIPT"
+  MARKED_SKIP_ONBOARD=1 sh "$UPDATE_SCRIPT"
+  exit
+fi
+
 exec node "$ROOT/runtime/cli.js" "$@"

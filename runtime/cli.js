@@ -21,6 +21,7 @@ import { fetchLiveTape, liveTapePayload } from './live-tape.js';
 import { applyAnswer, companyClarification, nextClarification } from './clarify.js';
 import { resolvePlan } from './plan.js';
 import { runOnboarding } from './onboarding.js';
+import { checkForUpdate } from './update.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let config = loadConfig();
@@ -39,6 +40,7 @@ Run with no question to open the terminal and type queries there.
 
 Options
 ${row('--onboard', 'Re-run setup: API key, runtime and model')}
+${row('--update', 'Install the latest Marked release')}
 ${row('--agent <name>', 'Reasoning runtime for this run: claude, codex, openai-codex')}
 ${row('--as-of <ISO-8601>', 'Answer as of a past timestamp instead of now')}
 ${row('--help, -h', 'Show this help')}
@@ -392,6 +394,11 @@ process.on('SIGTERM', () => stop().finally(() => process.exit(143)));
 try {
   tui = new TuiClient({ appPath: path.join(root, 'terminal', 'dist', 'app.mjs'), model: modelLabel(startAgent, agentModel(config, startAgent)) });
   await tui.start();
+  if (!shouldOnboard && config.apiKey) {
+    void checkForUpdate(root).then(update => {
+      if (update) return tui.notice('UPDATE AVAILABLE · run marked --update', { reset: false });
+    });
+  }
   if (shouldOnboard || !config.apiKey) {
     const setup = await runOnboarding(tui);
     config = loadConfig();

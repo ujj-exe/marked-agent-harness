@@ -379,6 +379,9 @@ the API, a choice of Claude Code CLI, Codex CLI or an OpenAI Codex
 subscription, and a model. Re-run it any time with `marked-onboard`.
 Re-running the installer updates a clean managed checkout; if that checkout was
 modified, it is preserved beside the new installation as a timestamped backup.
+The home screen checks the installed commit in the background and shows an
+update alert when `main` changes. Run `marked --update` to install it without
+re-running onboarding.
 
 To drive it directly:
 

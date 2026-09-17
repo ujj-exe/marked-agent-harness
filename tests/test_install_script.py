@@ -10,6 +10,7 @@ def test_install_script_is_posix_shell_and_bootstraps_onboard():
     assert 'ln -sf "$INSTALL_DIR/bin/marked" "$BIN_DIR/marked"' in text
     assert "uv tool install --force --quiet" in text
     assert 'exec "$BIN_DIR/marked" --onboard' in text
+    assert 'MARKED_SKIP_ONBOARD' in text
     assert text.index("uv tool install") < text.index("git clone")
     assert 'main "$@" </dev/tty' in text
     assert "Installing the agent harness" in text
@@ -22,3 +23,10 @@ def test_install_script_preserves_a_dirty_checkout_before_updating():
     backup = text.index('mv "$INSTALL_DIR" "$BACKUP_DIR"')
     clone = text.index('git clone --quiet --depth 1 --branch "$REF"', backup)
     assert dirty < backup < clone
+
+
+def test_marked_update_uses_the_public_installer_without_onboarding():
+    text = (Path(__file__).parents[1] / "bin" / "marked").read_text()
+    assert '"${1:-}" == "--update"' in text
+    assert "https://marked.run/install" in text
+    assert "MARKED_SKIP_ONBOARD=1" in text

@@ -15,4 +15,9 @@ describe('splash live tape', () => {
     expect(text).toContain('NIFTY');
     expect(text).toContain('BANKNIFTY');
   });
+
+  it('shows the update command on the home screen', () => {
+    const text = strip(renderSplash('UPDATE AVAILABLE · run marked --update', 120, 0, 30));
+    expect(text).toContain('UPDATE AVAILABLE · run marked --update');
+  });
 });
