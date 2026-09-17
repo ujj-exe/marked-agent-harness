@@ -5851,6 +5851,7 @@ function runLocalCommand(text) {
     resetToSplash();
     return true;
   }
+  if (cmd === "/exit" && tui.scope) return false;
   if (cmd === "/quit" || cmd === "/exit") {
     quitApp();
     return true;

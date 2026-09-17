@@ -434,6 +434,9 @@ function runLocalCommand(text) {
   if (cmd === '/save')   { saveCurrentReport(); return true; }
   if (cmd === '/load')   { openLoadPicker(); return true; }
   if (cmd === '/reset')  { resetToSplash(); return true; }
+  // Inside Company World `/exit` belongs to the runtime; outside it remains a
+  // convenient alias for quitting the terminal.
+  if (cmd === '/exit' && tui.scope) return false;
   if (cmd === '/quit' || cmd === '/exit') { quitApp(); return true; }
   return false;
 }
