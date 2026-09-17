@@ -48,3 +48,5 @@
 {"q":"HDFC Bank profit before tax FY2026","entity":"HDFC Bank","concepts":["ProfitBeforeTax"],"years":[2026]}
 {"q":"Sun Pharma depreciation FY2026","entity":"Sun Pharma","concepts":["DepreciationAndAmortisation"],"years":[2026]}
 {"q":"L&T total expenses FY2026","entity":"L&T","concepts":["TotalExpenses"],"years":[2026]}
+{"q":"Why has Infosys underperformed despite strong margins and cash generation? Break the return into earnings growth, valuation change, dividends and peer-relative performance over the last three years.","entity":"Infosys","route":"financial_analysis","datasets":["prices","corporate_actions"],"requirements":["security_price_return","peer_relative_return","earnings_revision_path","valuation_history"]}
+{"q":"Deep dive on TCS over five years: revenue, margins, cash conversion, debt, capex, client mix, AI economics, valuation, peers and the leading indicators to watch.","entity":"TCS","route":"financial_analysis","requirements":["financial_performance","operating_drivers","balance_sheet_and_cash","capital_allocation","business_mix","valuation_current","peer_comparison","ai_economics","forward_monitoring"]}

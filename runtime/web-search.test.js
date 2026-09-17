@@ -27,4 +27,11 @@ describe('native web-search policy', () => {
       packet: { data_plan: { analysis_requirements: ['peer_relative_return'] } },
     })).toEqual({ enabled: true, reason: 'performance_attribution_required' });
   });
+
+  it('uses the typed mandate gap instead of guessing from packet shape', () => {
+    expect(webSearchDecision({
+      question: 'Build an investment view',
+      mandateCoverage: [{ id: 'business_mix', material: true, status: 'missing' }],
+    })).toEqual({ enabled: true, reason: 'mandate_gap:business_mix' });
+  });
 });

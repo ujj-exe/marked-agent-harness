@@ -31,4 +31,17 @@ describe('evidence', () => {
     validateClaims(result, [{ evidence_id: 'web_01', data_type: 'web' }]);
     expect(result.claims[0].classification).toBe('external_context');
   });
+
+  it('accepts normalized news as external context and filing dates as cited facts', () => {
+    const result = { claims: [
+      { text: 'The publisher reported a contract win.', classification: 'external_context', evidence_ids: ['ev_news'] },
+      { text: 'The filing was published on July 28, 2026.', classification: 'fact', evidence_ids: ['ev_filing'] },
+    ] };
+    const checked = validateClaims(result, [
+      { evidence_id: 'ev_news', data_type: 'news' },
+      { evidence_id: 'ev_filing', data_type: 'filing' },
+    ]);
+    expect(checked.warnings).toEqual([]);
+    expect(result.claims).toHaveLength(2);
+  });
 });

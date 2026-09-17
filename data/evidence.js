@@ -37,39 +37,61 @@ export function validateClaims(result, evidence) {
   const known = new Set(byId.keys());
   const financial = new Set(evidence.filter(item => FINANCIAL_DATA_TYPES.includes(item.data_type)).map(item => item.evidence_id));
   const warnings = [];
+  const issues = [];
+  const warn = (message, issue) => {
+    warnings.push(message);
+    issues.push(issue);
+  };
   const claims = Array.isArray(result?.claims) ? result.claims : [];
   const kept = [];
   for (const claim of claims) {
     let ids = Array.isArray(claim.evidence_ids) ? claim.evidence_ids : [];
     const invalid = ids.filter(id => !known.has(id));
     if (invalid.length) {
-      warnings.push(`Removed unknown evidence reference: ${invalid.join(', ')}`);
+      warn(`Removed unknown evidence reference: ${invalid.join(', ')}`, {
+        code: 'unknown_evidence', material: invalid.length === ids.length,
+        claim: claim.text || null, evidence_ids: invalid,
+      });
       ids = ids.filter(id => known.has(id));
       claim.evidence_ids = ids;
     }
-    const webOnly = ids.length && ids.every(id => byId.get(id)?.data_type === 'web');
-    if (claim.classification === 'fact' && webOnly) {
+    const externalOnly = ids.length && ids.every(id => EXTERNAL_DATA_TYPES.includes(byId.get(id)?.data_type));
+    if (claim.classification === 'fact' && externalOnly) {
       claim.classification = 'external_context';
-      warnings.push(`Reclassified web-sourced claim: ${claim.text || 'unlabeled claim'}`);
+      warn(`Reclassified web-sourced claim: ${claim.text || 'unlabeled claim'}`, {
+        code: 'web_claim_reclassified', material: false, claim: claim.text || null,
+      });
     }
-    if (claim.classification === 'external_context' && (!ids.length || !webOnly)) {
-      warnings.push(`Omitted unsupported external claim: ${claim.text || 'unlabeled claim'}`);
+    if (claim.classification === 'external_context' && (!ids.length || !externalOnly)) {
+      warn(`Omitted unsupported external claim: ${claim.text || 'unlabeled claim'}`, {
+        code: 'unsupported_external_claim', material: true, claim: claim.text || null,
+      });
       continue;
     }
     if (!ids.length && claim.classification === 'fact') {
-      warnings.push(`Omitted unsupported factual claim: ${claim.text || 'unlabeled claim'}`);
+      warn(`Omitted unsupported factual claim: ${claim.text || 'unlabeled claim'}`, {
+        code: 'unsupported_fact', material: true, claim: claim.text || null,
+      });
       continue;
     }
     // A search or planning record cannot carry a number. If the claim states one,
     // it has to point at a validated financial fact, not at generic query evidence.
-    if (claim.classification === 'fact' && ids.length && /\d/.test(String(claim.text)) && !ids.some(id => financial.has(id))) {
-      warnings.push(`Omitted unsupported numeric claim: ${claim.text || 'unlabeled claim'}`);
+    if (claim.classification === 'fact' && ids.length && hasFinancialNumber(claim.text) && !ids.some(id => financial.has(id))) {
+      warn(`Omitted unsupported numeric claim: ${claim.text || 'unlabeled claim'}`, {
+        code: 'unsupported_numeric_claim', material: true, claim: claim.text || null,
+      });
+      continue;
+    }
+    if (claim.classification === 'inference' && hasFinancialNumber(claim.text) && !ids.length) {
+      warn(`Omitted uncited numeric inference: ${claim.text || 'unlabeled claim'}`, {
+        code: 'uncited_numeric_inference', material: true, claim: claim.text || null,
+      });
       continue;
     }
     kept.push(claim);
   }
   result.claims = kept;
-  return { result, warnings };
+  return { result, warnings, issues };
 }
 
 // ── Financial fact typing ───────────────────────────────────────────────────
@@ -79,6 +101,11 @@ export function validateClaims(result, evidence) {
 // claim. Everything else stays `query_evidence` and cannot back a number.
 
 export const FINANCIAL_DATA_TYPES = ['financial_fact', 'metric', 'shareholding', 'market_price', 'corporate_action'];
+const EXTERNAL_DATA_TYPES = ['web', 'news', 'macro', 'market_context'];
+
+function hasFinancialNumber(value) {
+  return /(?:₹|INR|USD)\s*[\d,.]+|\b\d+(?:\.\d+)?\s*(?:%|x|crores?|lakh(?:\s+crore)?|million|billion|shares?)\b/i.test(String(value ?? ''));
+}
 
 const REQUIRED_FACT_FIELDS = ['value', 'concept_id', 'period', 'basis', 'unit', 'company'];
 

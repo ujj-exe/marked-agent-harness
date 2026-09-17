@@ -82,6 +82,7 @@ for (const item of corpus) {
       resolved_entity: session.packet?.companies?.[0]?.company?.common_name
         ?? session.packet?.entity?.company?.common_name ?? plan.references?.[0] ?? null,
       required_concepts: plan.required_concepts ?? [],
+      analysis_requirements: plan.analysis_requirements ?? [],
       returned_concepts: [...new Set(facts.map(fact => fact.concept_id))],
       fiscal_years: plan.fiscal_years ?? [],
       returned_years: [...new Set(facts.map(fact => fact.fiscal_year).filter(Boolean))].sort(),
@@ -115,12 +116,14 @@ function score(trace) {
     || want.years.every(year => trace.fiscal_years?.includes(year));
   const routeOk = !want.route || trace.route === want.route;
   const datasetsOk = !want.datasets?.length || want.datasets.every(name => trace.datasets?.includes(name));
+  const requirementsOk = !want.requirements?.length
+    || want.requirements.every(name => trace.analysis_requirements?.includes(name));
   // Answered: something concrete came back and nothing is outstanding.
   const answered = Boolean(trace.ok && !trace.unresolved && (trace.fact_count > 0 || trace.datasets?.length));
   // Coverage: of the concepts the plan asked for, how many actually returned.
   const asked = trace.required_concepts?.length ?? 0;
   const got = asked ? trace.required_concepts.filter(id => trace.returned_concepts.includes(id)).length : 0;
-  return { entityOk, conceptsOk, yearsOk, routeOk, datasetsOk, answered, coverage: asked ? got / asked : null };
+  return { entityOk, conceptsOk, yearsOk, routeOk, datasetsOk, requirementsOk, answered, coverage: asked ? got / asked : null };
 }
 
 const scored = traces.map(trace => ({ trace, ...score(trace) }));
@@ -139,6 +142,7 @@ console.log(`  concept resolution    ${rate(count(s => s.conceptsOk), traces.len
 console.log(`  period resolution     ${rate(count(s => s.yearsOk), traces.length)}`);
 console.log(`  route classification  ${rate(count(s => s.routeOk), traces.length)}`);
 console.log(`  dataset selection     ${rate(count(s => s.datasetsOk), traces.length)}`);
+console.log(`  analytical mandate    ${rate(count(s => s.requirementsOk), traces.length)}`);
 console.log(`\n${B}RETRIEVAL${R}`);
 console.log(`  answered              ${rate(count(s => s.answered), traces.length)}`);
 console.log(`  initial plan sufficed ${rate(count(s => s.answered && !s.trace.repair_triggered), traces.length)}`);
@@ -150,11 +154,11 @@ console.log(`  repair success        ${rate(repairWorked.length, repaired.length
 console.log(`  false repair          ${rate(falseRepairs.length, repaired.length)}`);
 console.log(`\n${B}LATENCY${R}  median ${median(traces.map(t => t.elapsed_ms))}ms · p90 ${percentile(traces.map(t => t.elapsed_ms), 0.9)}ms`);
 
-const failures = scored.filter(s => !s.answered || !s.entityOk || !s.conceptsOk || !s.yearsOk || !s.routeOk);
+const failures = scored.filter(s => !s.answered || !s.entityOk || !s.conceptsOk || !s.yearsOk || !s.routeOk || !s.requirementsOk);
 if (failures.length) {
   console.log(`\n${B}FAILURES${R}  ${D}${failures.length} of ${traces.length}${R}`);
   for (const { trace, ...marks } of failures.slice(0, 25)) {
-    const why = Object.entries({ entity: marks.entityOk, concepts: marks.conceptsOk, periods: marks.yearsOk, route: marks.routeOk, answered: marks.answered })
+    const why = Object.entries({ entity: marks.entityOk, concepts: marks.conceptsOk, periods: marks.yearsOk, route: marks.routeOk, mandate: marks.requirementsOk, answered: marks.answered })
       .filter(([, ok]) => !ok).map(([name]) => name).join(', ');
     console.log(`  ${D}${why.padEnd(28)}${R} ${trace.query.slice(0, 52)}`);
     console.log(`    ${D}route=${trace.route} entity=${trace.resolved_entity} concepts=${(trace.required_concepts || []).slice(0, 5).join(',')} years=${JSON.stringify(trace.fiscal_years)}${trace.error ? ` error=${trace.error}` : ''}${R}`);

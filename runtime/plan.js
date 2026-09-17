@@ -2,6 +2,7 @@ import { conceptMatches, extractConcepts, isDerived, isInstant, REPORTED_CONCEPT
 import { selectEquity } from '../data/marked-client.js';
 import { validateFinancialFacts } from '../data/evidence.js';
 import { parseScreen } from './screen.js';
+import { ANALYSIS_REQUIREMENTS } from './research-mandate.js';
 
 // The data plan is the runtime's own answer to "what has to be true before a
 // reasoning worker is allowed to see this question". It is built locally from
@@ -263,7 +264,7 @@ export async function executeDataPlan(data, plan, { limit = 300 } = {}) {
       rejected.push(...checked.rejected);
     }
 
-    if (derived.length) {
+    if (derived.length && typeof data.metrics === 'function') {
       requests.push({ route: '/v1/financial-metrics', ticker, period: plan.period, basis: plan.basis });
       const response = await data.metrics({ ticker, period: plan.period, basis: plan.basis, as_of: plan.as_of ?? undefined });
       const rows = flattenMetricRows(rowsOf(response), derived);
@@ -358,6 +359,7 @@ const DATASET_FETCHERS = {
     ticker, interval: '1d', latest: false,
     limit: Math.min(1300, Math.max(60, (plan.lookback_years ?? 1) * 260)),
   }),
+  news: (data, ticker) => data.news?.({ company: ticker, limit: 30 }),
 };
 
 /** Names to try for one reference, best first. */
@@ -561,6 +563,12 @@ export function mergePlans(local, luna) {
     planned_by: 'marked',
     route,
     datasets: [...new Set([...(local.datasets ?? []), ...(route === 'price_lookup' ? ['quote'] : [])])],
+    analysis_requirements: [...new Set([
+      ...(local.analysis_requirements ?? []),
+      ...(Array.isArray(luna.analysis_requirements)
+        ? luna.analysis_requirements.filter(item => ANALYSIS_REQUIREMENTS.includes(item))
+        : []),
+    ])],
     references,
     // Neither planner's name is authoritative: Luna returns a display name that
     // Marked's own search may not resolve ("Dixon Technologies" fails where

@@ -105,8 +105,18 @@ describe('review loop', () => {
   });
 
   it('keeps only datasets the runtime can actually fetch', () => {
-    const reviewed = applyReview(plan, { verdict: 'revise', datasets: ['shareholding', 'astrology', 'filings'] });
-    expect(reviewed.datasets).toEqual(['shareholding', 'filings']);
+    const reviewed = applyReview(plan, { verdict: 'revise', datasets: ['shareholding', 'astrology', 'filings', 'news'] });
+    expect(reviewed.datasets).toEqual(['shareholding', 'filings', 'news']);
+  });
+
+  it('keeps only answer requirements enforced by the completion gate', () => {
+    const reviewed = applyReview(plan, {
+      verdict: 'revise',
+      analysis_requirements: ['valuation_history', 'peer_relative_return', 'made_up_leg'],
+      references: ['TCS'],
+    });
+    expect(reviewed.analysis_requirements).toEqual(['valuation_history', 'peer_relative_return']);
+    expect(reviewed.references).toContain('TCS');
   });
 
   it('tells the reviewer the vocabulary and asks for intent first', () => {

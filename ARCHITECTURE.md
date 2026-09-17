@@ -65,10 +65,22 @@ claim. When the requested facts are absent the runtime renders DATA GAP and does
 not launch a reasoning provider at all.
 
 The orchestrator uses local intent only as a fast path. Natural-language
-questions go through Marked's Luna-backed plan and executor, then the returned
-route, company references, concepts and evidence determine the local packet
-and visual blocks. It assigns evidence IDs, launches one reasoning provider,
-validates structured JSON and renders the result. Provider selection is
+questions go through Marked's Luna-backed plan and executor. The runtime then
+builds a typed research mandate: the answer-level analytical legs that must be
+established, separately from the endpoints that happened to return data.
+Complex mandates receive one semantic review before retrieval.
+
+After retrieval, a deterministic coverage gate compares the packet with the
+mandate. Missing material legs enable the reasoning provider's native web
+search, with Marked remaining canonical where it has coverage. The provider
+returns evidence-linked claims plus one coverage record per required leg. A
+post-synthesis gate validates both; an incomplete result receives one bounded
+repair pass. Unsupported material claims are removed before rendering, while
+unavailable analytical legs are visibly retained as coverage gaps.
+
+Every run saves a `research_cycle` receipt containing the mandate, Marked API
+requests, document expansion, web-search policy, each synthesis/repair round,
+sources, citation issues and the final coverage audit. Provider selection is
 centralized in `runtime/providers.js`.
 
 Workers receive no Marked API key and no TUI protocol. Marked controls their

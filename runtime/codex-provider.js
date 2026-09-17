@@ -20,6 +20,7 @@ export class CodexProvider extends AgentProvider {
         'exec',
         ...(this.options.model ? ['--model', this.options.model] : []),
         ...(options.webSearch ? ['--enable', 'standalone_web_search'] : []),
+        '--disable', 'apps', '--disable', 'plugins',
         '--ephemeral', '--ignore-user-config', '--sandbox', 'read-only', '--skip-git-repo-check', '--color', 'never',
         '--output-schema', schemaPath, '--output-last-message', outputPath, '-C', options.cwd || process.cwd(), '-',
       ], { cwd: options.cwd, input: prompt, timeoutMs: options.timeoutMs, signal: this.controller.signal });

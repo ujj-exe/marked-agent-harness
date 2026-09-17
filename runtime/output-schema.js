@@ -1,10 +1,12 @@
+import { ANALYSIS_REQUIREMENTS } from './research-mandate.js';
+
 export const researchResultSchema = {
   type: 'object',
   additionalProperties: false,
   required: [
     'type', 'summary', 'conviction', 'thesis', 'bull_case', 'bear_case',
     'catalysts', 'risks', 'invalidation', 'levels', 'claims', 'sources',
-    'context', 'follow_ups',
+    'context', 'follow_ups', 'coverage', 'material_gaps',
   ],
   properties: {
     type: { type: 'string', const: 'research_result' },
@@ -31,6 +33,21 @@ export const researchResultSchema = {
       },
     },
     sources: { type: 'array', items: { type: 'string' } },
+    coverage: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['requirement', 'status', 'evidence_ids', 'note'],
+        properties: {
+          requirement: { type: 'string', enum: ANALYSIS_REQUIREMENTS },
+          status: { type: 'string', enum: ['complete', 'partial', 'unavailable'] },
+          evidence_ids: { type: 'array', items: { type: 'string' } },
+          note: { type: 'string' },
+        },
+      },
+    },
+    material_gaps: { type: 'array', items: { type: 'string' } },
     context: { type: 'string' },
     follow_ups: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['label', 'question'], properties: { label: { type: 'string' }, question: { type: 'string' } } } },
   },
@@ -47,6 +64,11 @@ export function validateResearchResult(result) {
   }
   if (result.type !== 'research_result') throw new Error('Agent result has an invalid type');
   if (!Array.isArray(result.claims) || !Array.isArray(result.risks)) throw new Error('Agent result has invalid claims or risks');
+  // Older provider bridges and tests can omit these fields; the schema sent to
+  // production providers requires them. Normalising here keeps saved sessions
+  // readable across upgrades without weakening the live contract.
+  if (!Array.isArray(result.coverage)) result.coverage = [];
+  if (!Array.isArray(result.material_gaps)) result.material_gaps = [];
   if (result.conviction && !researchResultSchema.properties.conviction.enum.includes(result.conviction)) throw new Error('Agent result has an invalid conviction');
   for (const claim of result.claims) {
     if (!claim || typeof claim.text !== 'string' || !Array.isArray(claim.evidence_ids)) throw new Error('Agent result has an invalid claim');

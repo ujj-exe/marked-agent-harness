@@ -6,13 +6,18 @@ const VALUATION_HISTORY = /\b(?:valuation|p\/e|price[ -]to[ -]earnings|ev\/ebitd
 const SEGMENT_MIX = /\bsegment(?: mix| breakdown| contribution| revenue| profit)?\b/i;
 
 /** Decide whether the final provider receives its native web-search tool. */
-export function webSearchDecision({ question, intent = {}, packet = {}, evidence = [], pointInTime = false }) {
+export function webSearchDecision({ question, intent = {}, packet = {}, evidence = [], pointInTime = false, mandateCoverage = [] }) {
   const text = String(question ?? '');
   if (EXPLICIT.test(text)) return { enabled: true, reason: 'explicit_web_request' };
 
   // Native search cannot reliably recreate a historical information boundary.
   if (pointInTime) {
     return { enabled: false, reason: 'historical_as_of' };
+  }
+
+  const missingRequirement = mandateCoverage.find(item => item.material && item.status !== 'covered');
+  if (missingRequirement) {
+    return { enabled: true, reason: `mandate_gap:${missingRequirement.id}` };
   }
 
   const gaps = [packet.unresolved, ...(Array.isArray(packet.data_gaps) ? packet.data_gaps : [])].filter(Boolean);

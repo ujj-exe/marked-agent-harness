@@ -84,47 +84,9 @@ FY2026, or what an Indian exchange disclosure is. The harness turns a
 natural-language question into a structured, evidence-backed research task
 before any model is asked to think about it.
 
-## What that looks like
-
-A user asks:
-
-```
-what changed in Dixon this year
-```
-
-Marked turns that into a financial analysis plan across the relevant periods
-and concepts, retrieves the underlying data, validates the evidence that comes
-back, and hands the reasoning worker a structured research context. The
-terminal can then surface something shaped like this:
-
-```
-FY2023 → FY2026
-
-  Revenue              ...
-  EBITDA               ...
-  PAT                  ...
-  EBITDA margin        ...
-  Finance costs        ...
-  Employee costs       ...
-  Other income         ...
-
-  Evidence
-  ────────────────────────────────
-  financial facts
-  filings
-  events
-  disclosures
-
-  Analysis
-  ────────────────────────────────
-  what changed
-  what appears fundamental
-  what may be structural or accounting
-  what remains uncertain
-```
-
-At no point does the user need to know which endpoints, metrics, filings or
-retrieval calls that required.
+Ask `what changed in Dixon this year` and Marked resolves the company, periods,
+concepts and evidence before the model reasons. The user never needs to know
+which endpoints, metrics or filings were required.
 
 ## Self-healing research
 
@@ -178,8 +140,20 @@ actually exposes before building the repair. Every field the judge returns is
 validated against Marked's published vocabulary, and anything invalid is
 discarded rather than queried. A judge that fails, times out or answers
 nonsense leaves the plan exactly as it was, so review can improve a plan and
-never break one. There is exactly one repair. A loop of model calls is not a
-harness.
+never break one.
+
+Retrieval sufficiency is not answer completeness. For analytical requests the
+runtime also creates a typed research mandate covering the requested return,
+valuation, peer, ownership, event, operating and forward-looking legs. The
+packet is checked against that mandate before synthesis. Missing material legs
+grant targeted provider-native web search; after synthesis, a second gate
+checks that every completed leg is linked to evidence used by a retained claim.
+One bounded repair pass fills omissions or removes unsupported assertions.
+
+The saved `research_cycle` is the audit receipt: mandate, API calls, expanded
+documents, search decision, sources, each synthesis attempt, citation issues
+and final coverage status. A material citation problem is never rendered as a
+polished thesis; a genuinely unavailable leg remains explicitly labeled.
 
 ## No user question should become a runtime error
 
@@ -273,34 +247,14 @@ or sent to the data service.
 
 ## Native API, external MCP
 
-The application uses a first-party API client for its own data access. MCP is
-an external integration surface, for other people's agents reaching Marked.
-
-```
-  MARKED
-    │
-    ├── Native application
-    │     └── Marked API client
-    │
-    └── External access
-          └── REST / MCP
-```
-
-The harness does not route its own internal requests through MCP merely because
-MCP exists.
+The application uses its first-party API client internally. REST and MCP are
+external integration surfaces for other agents reaching Marked, not extra hops
+inside this runtime.
 
 ## API capacity
 
-Marked accounts carry tiered API limits, so capacity is a runtime concern
-rather than something each skill improvises. Today the data layer is the single
-REST boundary for the application, and it handles rate-limit responses with
-`Retry-After` aware retry and backoff, preserves rate-limit headers on every
-response, and supports cancellation through an abort signal.
-
-Bounded concurrency, request queueing and deduplication are not implemented
-yet. A research plan that touches several companies currently issues its
-retrievals in parallel, which a low-concurrency account will feel. That work
-belongs in `data/marked-client.js`, behind the same boundary, and nowhere else.
+The data client is the single REST boundary. It handles `Retry-After` aware
+backoff, preserves rate-limit headers and supports cancellation.
 
 ## The research terminal
 
@@ -448,84 +402,19 @@ alongside it.
 
 ## Architecture
 
-```
-                          MARKED
-                    AGENTIC HARNESS
-                            │
-            ┌───────────────┼───────────────┐
-            │               │               │
-          DATA           CONTROL            UI
-            │               │               │
-      Marked API         planning          TUI
-      identity        orchestration       panels
-      financials          retries         charts
-      filings          validation       evidence
-      ownership          sessions
-      provenance
-            │               │
-            └───────┬───────┘
-                    │
-            research context
-                    │
-          ┌─────────┴─────────┐
-          │                   │
-    Claude Code             Codex
-     reasoning            reasoning
-      worker                worker
-          │                   │
-          └─────────┬─────────┘
-                    │
-            structured result
-                    │
-            evidence validation
-                    │
-                    ▼
-                  MARKED
-                    │
-                    ▼
-                   TUI
-```
-
-The tree follows the same split. `runtime/` holds orchestration, sessions,
-agent providers, planning and validation. `data/` is the Marked API client and
-the canonical model behind it: companies, securities, financials, filings,
-ownership, events, corporate actions and provenance. `skills/` holds the nine
-seats. `src/` is presentation components, formatting and themes; `terminal/` is
-the terminal runtime, rendering, panels and server; `bin/` is the CLI
-entrypoints; `tests/` is unit, integration and smoke coverage.
-
-## Domain playbook
-
-`SKILL.md` at the top level defines the financial research rules and nothing
-else. It carries no installation instructions, no credentials, no transport
-details, no TUI commands, no provider-specific tool names, no process lifecycle
-and no render commands, because all of those belong to the runtime.
-
-Skills describe what to investigate. The harness decides how to retrieve and
-execute it.
+`runtime/` owns planning, orchestration, providers, validation and sessions;
+`data/` owns the Marked API and canonical financial model; `skills/` defines
+what each research seat investigates; `src/` and `terminal/` own presentation;
+`bin/` contains the CLI entrypoints. See [ARCHITECTURE.md](ARCHITECTURE.md) for
+the full flow.
 
 ## Design principles
 
-**Domain-specific over generic.** The harness understands financial research
-concepts rather than treating finance as generic retrieval.
-
-**Evidence over confidence.** An unsupported answer is worse than an explicit
-data gap.
-
-**Deterministic control around probabilistic reasoning.** Models propose,
-interpret and diagnose. The runtime validates, executes and governs.
-
-**Bounded recovery.** A failed plan can be repaired once. The harness does not
-enter an uncontrolled agent loop.
-
-**Point-in-time correctness.** Historical research respects what was knowable
-at the requested time.
-
-**Provider independence.** Claude and Codex are reasoning backends, not
-architectural dependencies.
-
-**Data first.** The model should spend its context understanding the financial
-problem, not discovering where basic financial facts live.
+- Domain-specific retrieval over generic search.
+- Evidence over confidence; an explicit gap beats an unsupported answer.
+- Deterministic control around probabilistic reasoning.
+- Bounded recovery rather than an uncontrolled model loop.
+- Point-in-time correctness and provider independence.
 
 ## Development
 
@@ -533,7 +422,7 @@ Node.js 20+ and Python 3.11+.
 
 ```bash
 npm install
-npm test          # 960 tests
+npm test
 npm run build     # bundles terminal/dist/app.mjs, commit the result
 
 uv sync
@@ -546,22 +435,13 @@ until `npm run build` has run. There is headless smoke coverage for the
 research pipeline as well, so a healthy run is verifiable without the
 interactive terminal.
 
-## Current scope
-
-Marked is focused on Indian listed-company research: financial analysis,
-company comparison, earnings analysis, ownership research, filing and
-disclosure research, event and corporate-action research, evidence-backed
-financial reasoning, and terminal-based research workflows.
-
-The application is read only and places no orders.
-
 ## Compliance boundary
 
-Marked separates Marked-backed facts from model interpretation in its output
-contract. Any workflow used to generate, publish or distribute research or
-investment-related content should be reviewed for the applicable regulatory,
-disclosure, conflicts, suitability, recordkeeping and publication requirements.
-This repository is not legal advice.
+Marked is read-only and places no orders. It separates Marked-backed facts from
+model interpretation. Publishing or distributing investment research still
+requires review for applicable regulatory, disclosure, conflicts, suitability,
+recordkeeping and publication requirements. This repository is not legal
+advice.
 
 ## License
 
@@ -572,11 +452,5 @@ The license covers the software in this repository. Marked's hosted data
 services, datasets, APIs and other separately licensed materials are governed
 by their own terms.
 
-## Status
-
-Marked is actively under development. The goal is not another finance chatbot,
-it is the domain-specific execution layer around financial reasoning: financial
-data, plus financial domain knowledge, plus agentic planning, plus evidence,
-plus validation, plus frontier reasoning.
-
-**Marked turns frontier models into financial research agents.**
+Marked is actively developed as the domain-specific execution layer around
+financial reasoning, not another finance chatbot.

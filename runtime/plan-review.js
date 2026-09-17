@@ -1,4 +1,5 @@
 import { DERIVED_METRICS, INSTANT_CONCEPTS, REPORTED_CONCEPTS } from '../data/concepts.js';
+import { ANALYSIS_REQUIREMENTS } from './research-mandate.js';
 
 // Neither planner is the source of truth. Marked's Luna reads the question well
 // but returns a display name its own search cannot always resolve and a single
@@ -22,7 +23,7 @@ const ROUTES = [
 // Datasets the runtime can fetch beyond the income statement. Teaching the
 // reviewer that ownership and filings exist is pointless unless it can ask for
 // them, so it names them here and the retrieval layer honours the request.
-const DATASETS = ['shareholding', 'filings', 'events', 'corporate_actions', 'prices'];
+const DATASETS = ['quote', 'shareholding', 'filings', 'events', 'corporate_actions', 'prices', 'news'];
 
 // The judge's output is a diagnosis, not a plan. It says what information the
 // results lack; turning that into a retrieval plan is the builder's job, and
@@ -31,7 +32,10 @@ const DATASETS = ['shareholding', 'filings', 'events', 'corporate_actions', 'pri
 export const planReviewSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['verdict', 'reasoning'],
+  required: [
+    'verdict', 'reasoning', 'missing', 'unnecessary', 'concepts', 'references',
+    'fiscal_years', 'period', 'basis', 'route', 'datasets', 'analysis_requirements',
+  ],
   properties: {
     verdict: { type: 'string', enum: ['ok', 'revise'] },
     reasoning: { type: 'string' },
@@ -44,6 +48,7 @@ export const planReviewSchema = {
     basis: { type: 'string', enum: BASES },
     route: { type: 'string', enum: ROUTES },
     datasets: { type: 'array', items: { type: 'string', enum: DATASETS } },
+    analysis_requirements: { type: 'array', items: { type: 'string', enum: ANALYSIS_REQUIREMENTS } },
   },
 };
 
@@ -77,6 +82,7 @@ export function reviewPrompt(question, plan, candidates, round, catalogue = null
       periods: PERIODS,
       bases: BASES,
       routes: ROUTES,
+      analysis_requirements: ANALYSIS_REQUIREMENTS,
     },
   };
   return `Return only JSON matching this contract: ${JSON.stringify(planReviewSchema)}
@@ -120,7 +126,11 @@ Rules:
 - Put any non-financial dataset the question needs in "datasets": ownership and
   pledge changes are shareholding; management commentary and results documents
   are filings; dividends and buybacks are corporate_actions; what the stock did
-  is prices. A question can need these and no concepts at all.
+  is prices; current external context is news. A question can need these and no
+  concepts at all.
+- Put every answer-level obligation in "analysis_requirements". These are
+  completion checks, not prose topics. Include every material leg the question
+  explicitly asks the final answer to establish.
 - When relative performance is requested without a comparator, add relevant
   listed peers in "references". Those names are resolved against Marked before
   retrieval; do not use a sector label as though it were a company.
@@ -136,7 +146,8 @@ Rules:
   marginal concepts makes the answer worse, not better.
 - State the intent you inferred in one sentence at the start of reasoning, so a
   wrong reading is visible in the audit trail rather than silently acted on.
-- Reply "revise" with the fields you would change. Omit fields you would keep.
+- Reply "revise" with the complete corrected plan fields. For "ok", repeat the
+  proposed scalar fields and use empty arrays for changes that are unnecessary.
 
 ${JSON.stringify(context)}`;
 }
@@ -176,7 +187,10 @@ export function buildRepairPlan(plan, review) {
   // replacement: it has not been checked against Marked's identity index.
   const references = (Array.isArray(review.references) ? review.references : [])
     .filter(name => typeof name === 'string' && name.trim() && name.length <= 80);
-  const activeReferences = plan.analysis_requirements?.includes('peer_relative_return')
+  const analysisRequirements = (Array.isArray(review.analysis_requirements) ? review.analysis_requirements : [])
+    .filter(name => ANALYSIS_REQUIREMENTS.includes(name));
+  const activeReferences = [...(plan.analysis_requirements ?? []), ...analysisRequirements]
+    .some(name => ['peer_relative_return', 'peer_comparison'].includes(name))
     ? [...new Set([...plan.references, ...references])].slice(0, 5)
     : plan.references;
 
@@ -185,6 +199,7 @@ export function buildRepairPlan(plan, review) {
   return {
     ...plan,
     datasets: [...new Set([...(plan.datasets ?? []), ...datasets])],
+    analysis_requirements: [...new Set([...(plan.analysis_requirements ?? []), ...analysisRequirements])],
     concepts: concepts.length ? concepts : plan.concepts,
     required_concepts: required.length ? required : plan.required_concepts,
     fiscal_years: years.length ? years : plan.fiscal_years,
@@ -225,6 +240,7 @@ export async function reviewPlan(agent, question, plan, candidates, { rounds = 1
     }
     const before = new Set(current.concepts);
     const datasetsBefore = new Set(current.datasets ?? []);
+    const requirementsBefore = new Set(current.analysis_requirements ?? []);
     current = buildRepairPlan(current, review);
     // Compare the sets, not the counts: a revision that swaps three concepts for
     // three others is the most useful kind and nets to zero.
@@ -247,7 +263,9 @@ export async function reviewPlan(agent, question, plan, candidates, { rounds = 1
     const datasetsAdded = (current.datasets ?? []).filter(name => !datasetsBefore.has(name));
     entry.datasets = current.datasets ?? [];
     entry.datasets_added = datasetsAdded;
-    if (review.verdict === 'ok' || (!added.length && !removed.length && !datasetsAdded.length)) break;
+    entry.analysis_requirements = current.analysis_requirements ?? [];
+    entry.analysis_requirements_added = (current.analysis_requirements ?? []).filter(name => !requirementsBefore.has(name));
+    if (review.verdict === 'ok' || (!added.length && !removed.length && !datasetsAdded.length && !entry.analysis_requirements_added.length)) break;
   }
   return { plan: current, reviews };
 }

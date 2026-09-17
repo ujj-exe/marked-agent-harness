@@ -37,6 +37,31 @@ describe('Marked orchestrator', () => {
     expect(panel.sections.find(section => section.type === 'context').text).toContain('no unsupported material claim was rendered');
   });
 
+  it('passes the complete answer to the adaptive terminal pager', () => {
+    const facts = Array.from({ length: 9 }, (_, index) => ({
+      text: `Fact ${index + 1}`,
+      evidence_ids: [`ev_${index + 1}`],
+      classification: 'fact',
+    }));
+    const items = Array.from({ length: 6 }, (_, index) => `Item ${index + 1}`);
+    const panel = verdictPanel({
+      ...result(),
+      claims: facts,
+      bull_case: items,
+      bear_case: items,
+      catalysts: items,
+      risks: items,
+      invalidation: items,
+    }, [], 'research');
+
+    expect(panel.sections.find(section => section.type === 'facts').items).toHaveLength(9);
+    expect(panel.sections.find(section => section.type === 'bull_case').items).toHaveLength(6);
+    expect(panel.sections.find(section => section.type === 'bear_case').items).toHaveLength(6);
+    expect(panel.sections.find(section => section.type === 'catalysts').items).toHaveLength(6);
+    expect(panel.sections.find(section => section.type === 'risks').items).toHaveLength(6);
+    expect(panel.sections.find(section => section.type === 'invalidation').text).toContain('Item 6');
+  });
+
   it('retrieves citable promoter holdings for a natural-language comparison', async () => {
     const calls = [];
     const data = {
@@ -133,7 +158,13 @@ describe('Marked orchestrator', () => {
       tui: { render: async () => ({}) },
       save: () => {},
     });
-    const session = { intent: { kind: 'query' }, mode: 'analytical', requested_as_of: null };
+    const session = {
+      intent: { kind: 'query' }, mode: 'analytical', requested_as_of: null,
+      research_mandate: {
+        version: 1, question: 'Why did Infosys underperform its peers?', mode: 'analytical',
+        requirements: [{ id: 'peer_relative_return', label: 'Peer-relative return', material: true }],
+      },
+    };
     await orchestrator.complete(session, {
       question: 'Why has Infosys underperformed?', asOf: '2026-09-16', agentName: 'codex',
       packet: { data_plan: { analysis_requirements: ['peer_relative_return'] } },
@@ -142,6 +173,46 @@ describe('Marked orchestrator', () => {
     expect(options.webSearch).toBe(true);
     expect(prompt).toContain('Complete the bridge from security price/total return');
     expect(prompt).toContain('do not substitute a business-quality discussion');
+  });
+
+  it('repairs an incomplete analytical leg and persists the full cycle receipt', async () => {
+    let calls = 0;
+    let saved;
+    const orchestrator = new MarkedOrchestrator({
+      data: {},
+      agent: { name: 'codex', run: async () => {
+        calls += 1;
+        if (calls === 1) return {
+          ...result(), sources: [], material_gaps: ['peer return missing'],
+          coverage: [{ requirement: 'peer_relative_return', status: 'partial', evidence_ids: [], note: 'not found' }],
+        };
+        return {
+          ...result(),
+          sources: ['https://example.com/peer-return'], material_gaps: [],
+          claims: [{ text: 'Infosys lagged the selected peer.', evidence_ids: ['web_01'], classification: 'external_context' }],
+          coverage: [{ requirement: 'peer_relative_return', status: 'complete', evidence_ids: ['web_01'], note: 'completed from dated returns' }],
+        };
+      } },
+      tui: { render: async () => ({}) },
+      save: session => { saved = session; },
+    });
+    const session = {
+      intent: { kind: 'query' }, mode: 'analytical', requested_as_of: null,
+      research_mandate: {
+        version: 1, question: 'Why did Infosys underperform its peers?', mode: 'analytical',
+        requirements: [{ id: 'peer_relative_return', label: 'Peer-relative return', material: true }],
+      },
+    };
+    await orchestrator.complete(session, {
+      question: 'Why did Infosys underperform its peers?', asOf: '2026-09-16', agentName: 'codex',
+      packet: { data_plan: { analysis_requirements: ['peer_relative_return'] } },
+      evidence: [], blocks: [], totalTools: 0, mode: 'analytical',
+    });
+    expect(calls).toBe(2);
+    expect(saved.research_cycle.rounds.map(round => round.status)).toEqual(['incomplete', 'complete']);
+    expect(saved.research_cycle.final_audit.passed).toBe(true);
+    expect(saved.unresolved_material_citation_issues).toBe(0);
+    expect(saved.evidence).toContainEqual(expect.objectContaining({ evidence_id: 'web_01' }));
   });
 
   it('patches completed streamed fields before the final verdict', async () => {
@@ -592,7 +663,9 @@ describe('research packet guarantee', () => {
       expect.objectContaining({ document_id: 'doc_latest', heading: 'Management discussion' }),
     ]));
     expect(saved.research_loop).toMatchObject({ requests: 1, stop_reason: 'evidence_target' });
-    expect(agentCalls).toBe(1);
+    // The provider fixture intentionally omits the required coverage receipt,
+    // so the production completion gate performs its one bounded repair.
+    expect(agentCalls).toBe(2);
   });
 });
 
