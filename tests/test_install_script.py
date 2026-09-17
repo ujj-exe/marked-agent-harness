@@ -23,6 +23,7 @@ def test_install_script_preserves_a_dirty_checkout_before_updating():
     backup = text.index('mv "$INSTALL_DIR" "$BACKUP_DIR"')
     clone = text.index('git clone --quiet --depth 1 --branch "$REF"', backup)
     assert dirty < backup < clone
+    assert 'elif ! git -C "$INSTALL_DIR" pull --quiet --ff-only' in text
 
 
 def test_marked_update_uses_the_public_installer_without_onboarding():
