@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://marked.run">Website</a> ·
+  <a href="https://docs.marked.run">Docs</a> ·
   <a href="https://api.marked.run/v1/">REST API</a> ·
   <a href="https://app.marked.run/mcp/">MCP</a> ·
   <a href="ARCHITECTURE.md">Architecture</a> ·
@@ -182,6 +183,7 @@ model.
 | Domain | Purpose |
 | --- | --- |
 | [marked.run](https://marked.run) | Product, API keys and installer |
+| [docs.marked.run](https://docs.marked.run) | Documentation and API reference |
 | [marked.run/install](https://marked.run/install) | Public shell installer |
 | [api.marked.run](https://api.marked.run/v1/) | Authenticated REST data API |
 | [app.marked.run/mcp](https://app.marked.run/mcp/) | Authenticated MCP endpoint |
