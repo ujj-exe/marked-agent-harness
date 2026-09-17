@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { agentModel, loadConfig, requireApiKey, saveAgent, saveApiKey } from './config.js';
+import { agentApiKey, agentModel, loadConfig, requireApiKey, saveAgent, saveApiKey, saveProviderKey } from './config.js';
 import { MarkedClient } from '../data/marked-client.js';
 import { createAgentProvider } from './providers.js';
-import { modelLabel } from '../config/models.js';
+import { agentLabel, modelLabel, requiresApiKey } from '../config/models.js';
 import { CancelledError, MarkedOrchestrator } from './orchestrator.js';
 import { parseMnemonic } from './mnemonics.js';
 import { createWorld, parseWorldCommand, worldBlocks, setChartView, worldScope, stepTab } from './world.js';
@@ -41,7 +41,7 @@ Run with no question to open the terminal and type queries there.
 Options
 ${row('--onboard', 'Re-run setup: API key, runtime and model')}
 ${row('--update', 'Install the latest Marked release')}
-${row('--agent <name>', 'Reasoning runtime for this run: claude, codex, openai-codex')}
+${row('--agent <name>', 'Reasoning runtime: claude[-api], codex[-api], openai-codex')}
 ${row('--as-of <ISO-8601>', 'Answer as of a past timestamp instead of now')}
 ${row('--help, -h', 'Show this help')}
 
@@ -97,6 +97,25 @@ let data;
 let orchestrator;
 let tui;
 let conversation = loadConversation();
+
+function configuredProvider(name, current = loadConfig()) {
+  return createAgentProvider(name, {
+    model: agentModel(current, name),
+    apiKey: agentApiKey(current, name),
+  });
+}
+
+async function ensureProviderKey(name) {
+  if (!requiresApiKey(name) || agentApiKey(loadConfig(), name)) return;
+  const answer = await tui.input({
+    step: { current: 1, total: 1, title: `CONNECT ${agentLabel(name).toUpperCase()}` },
+    prompt: `Paste your ${agentLabel(name)}`,
+    hint: 'Stored locally in ~/.marked/config.json with mode 0600',
+    secret: true,
+  });
+  if (answer.cancelled) throw new Error('Model switch cancelled');
+  saveProviderKey(name, answer.value);
+}
 
 /** Put one clarification to the user; returns the sharpened question or null. */
 async function askClarification(clarification, question) {
@@ -404,8 +423,11 @@ try {
     config = loadConfig();
     startAgent = setup.agent;
     await tui.setModel(modelLabel(setup.agent, setup.model));
+  } else {
+    await ensureProviderKey(startAgent);
+    config = loadConfig();
   }
-  agent = createAgentProvider(startAgent, { model: agentModel(config, startAgent) });
+  agent = configuredProvider(startAgent, config);
   // `orchestrator` is rebuilt when the key or model changes, so resolve it at
   // call time rather than capturing whichever instance existed at startup.
   tui.onCancel = () => { orchestrator?.abort(); agent?.cancel?.(); };
@@ -438,10 +460,12 @@ try {
       try {
         if (selection.error) throw new Error(selection.error);
         // A bare /model is handled by the TUI picker; treat it here as a no-op report.
+        if (selection.agent) await ensureProviderKey(selection.agent);
         const chosen = selection.agent ? saveAgent(selection.agent, selection.model) : { agent: agent.name, model: agentModel(loadConfig(), agent.name) };
+        if (chosen.agent === 'codex-api' && !chosen.model) throw new Error('Choose an OpenAI model for codex-api.');
         if (selection.agent) {
           agent.cancel();
-          agent = createAgentProvider(chosen.agent, { model: chosen.model });
+          agent = configuredProvider(chosen.agent);
           if (orchestrator) orchestrator.agent = agent;
         }
         const label = modelLabel(chosen.agent, chosen.model);

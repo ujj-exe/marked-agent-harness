@@ -17,4 +17,23 @@ async def test_runtime_sends_schema_and_returns_structured_output(monkeypatch):
         }
 
     monkeypatch.setattr(codex_runtime, "responses_json", request)
-    assert await codex_runtime.run("question", "gpt-test", {"type": "object"}, web_search=True) == {"ok": True}
+    result = await codex_runtime.run(
+        "question", "gpt-test", {"type": "object"}, web_search=True
+    )
+    assert result == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_runtime_can_use_an_openai_api_key_provider(monkeypatch):
+    async def request(payload, **kwargs):
+        assert kwargs["selected"] == "openai"
+        return {
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": '{"ok":true}'}]}
+            ]
+        }
+
+    monkeypatch.setattr(codex_runtime, "responses_json", request)
+    assert await codex_runtime.run(
+        "question", "gpt-test", {"type": "object"}, provider="openai"
+    ) == {"ok": True}

@@ -3914,7 +3914,14 @@ init_paths();
 import fs4 from "node:fs";
 import os2 from "node:os";
 import path4 from "node:path";
-var AGENTS = ["claude", "codex", "openai-codex"];
+var AGENTS = ["claude", "claude-api", "codex", "codex-api", "openai-codex"];
+var AGENT_LABELS = {
+  claude: "Claude Code CLI",
+  "claude-api": "Claude API key",
+  codex: "Codex CLI",
+  "codex-api": "OpenAI API key",
+  "openai-codex": "ChatGPT/Codex subscription"
+};
 var CODEX_MODELS_CACHE = path4.join(os2.homedir(), ".codex", "models_cache.json");
 var CLAUDE_MODELS = [
   { id: "opus", label: "Opus \u2014 deepest reasoning" },
@@ -3933,9 +3940,9 @@ var CODEX_FALLBACK = [
 ].map((id) => ({ id, label: id }));
 var VALID_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function modelsFor(agent) {
-  const models = agent === "claude" ? CLAUDE_MODELS : codexModels();
+  const models = agent.startsWith("claude") ? CLAUDE_MODELS : codexModels();
   return [
-    { id: null, label: `Default (whatever ${agent} is configured to use)` },
+    ...agent === "codex-api" ? [] : [{ id: null, label: `Default (whatever ${agent} is configured to use)` }],
     ...models.filter((model) => VALID_ID.test(model.id))
   ];
 }
@@ -3950,6 +3957,9 @@ function currentModel() {
   }
   const agent = process.env.MARKED_AGENT || file.agent || "codex";
   return { agent, model: process.env.MARKED_MODEL || file.models?.[agent] || null };
+}
+function agentLabel(agent) {
+  return AGENT_LABELS[agent] ?? agent;
 }
 function codexModels() {
   try {
@@ -5085,11 +5095,11 @@ function buildFooter(width) {
   }
   const toolsCalled = tui.agentState?.tools?.called;
   const costStr = m.cost ? `${DIM2}~${m.cost}${RESET2}` : toolsCalled != null ? `${DIM2}${estimateCost(toolsCalled)}${RESET2}` : null;
-  const agentLabel = s?.agent;
+  const agentLabel2 = s?.agent;
   const modelLabel = s?.model || m.model;
   const toolsLabel = s?.tools?.called != null ? `${s.tools.called} tools` : m.tools ? `${m.tools} tools` : null;
   const meta = [
-    agentLabel ? `${DIM2}${agentLabel}${RESET2}` : null,
+    agentLabel2 ? `${DIM2}${agentLabel2}${RESET2}` : null,
     modelLabel ? `${DIM2}${modelLabel}${RESET2}` : null,
     toolsLabel ? `${DIM2}${toolsLabel}${RESET2}` : null,
     costStr,
@@ -5166,8 +5176,7 @@ function renderModelOverlay(width) {
   tui.modelList.forEach((entry, i) => {
     if (entry.agent !== provider) {
       provider = entry.agent;
-      const providerLabel = provider === "claude" ? "Claude Code CLI" : provider === "codex" ? "Codex CLI" : "OpenAI Codex";
-      lines.push(`  ${DIM2}${providerLabel}${RESET2}`);
+      lines.push(`  ${DIM2}${agentLabel(provider)}${RESET2}`);
     }
     const active = i === tui.modelIdx;
     const current = entry.agent === tui.modelCurrent?.agent && (entry.id ?? null) === (tui.modelCurrent?.model ?? null);

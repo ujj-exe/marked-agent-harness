@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_PATH, MARKED_HOME, configPath } from '../config/paths.js';
-import { AGENTS, isKnownModel } from '../config/models.js';
+import { AGENTS, API_KEY_AGENTS, isKnownModel } from '../config/models.js';
 
 export function loadConfig() {
   let file = {};
@@ -12,6 +12,7 @@ export function loadConfig() {
     apiBase: process.env.MARKED_API_BASE || file.apiBase || 'https://api.marked.run',
     agent: process.env.MARKED_AGENT || file.agent || 'codex',
     models: { ...file.models, ...(process.env.MARKED_MODEL ? { [process.env.MARKED_AGENT || file.agent || 'codex']: process.env.MARKED_MODEL } : {}) },
+    providerKeys: file.providerKeys ?? {},
     home: MARKED_HOME,
   };
 }
@@ -21,6 +22,31 @@ export function saveApiKey(apiKey, target = configPath()) {
     throw new Error('Marked API keys must start with mk_live_ or mk_test_.');
   }
   writeConfig({ ...loadConfig(), apiKey }, target);
+}
+
+export function validateProviderKey(agent, apiKey) {
+  const key = String(apiKey ?? '').trim();
+  if (agent === 'claude-api' && !/^sk-ant-[A-Za-z0-9_-]{16,}$/.test(key)) {
+    throw new Error('Claude API keys must start with sk-ant-.');
+  }
+  if (agent === 'codex-api' && !/^sk-[A-Za-z0-9_-]{16,}$/.test(key)) {
+    throw new Error('OpenAI API keys must start with sk-.');
+  }
+  if (!API_KEY_AGENTS.includes(agent)) throw new Error(`${agent} does not use a Marked-managed API key.`);
+  return key;
+}
+
+export function saveProviderKey(agent, apiKey, target = configPath()) {
+  const current = loadConfig();
+  const key = validateProviderKey(agent, apiKey);
+  writeConfig({ ...current, providerKeys: { ...current.providerKeys, [agent]: key } }, target);
+  return key;
+}
+
+export function agentApiKey(config = loadConfig(), agent = config.agent, env = process.env) {
+  if (agent === 'claude-api') return env.ANTHROPIC_API_KEY || config.providerKeys?.[agent] || '';
+  if (agent === 'codex-api') return env.OPENAI_API_KEY || config.providerKeys?.[agent] || '';
+  return '';
 }
 
 export function writeConfig(file, target = CONFIG_PATH) {

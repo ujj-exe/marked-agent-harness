@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 
-export function runProcess(command, args, { input, cwd, timeoutMs = 120000, signal, onStdout, onStderr } = {}) {
+export function runProcess(command, args, { input, cwd, env, timeoutMs = 120000, signal, onStdout, onStderr } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let settled = false;

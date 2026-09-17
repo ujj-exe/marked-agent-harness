@@ -12,6 +12,7 @@ import { shortDate } from '../data/normalization.js';
 import { renderBlocks, presetToBlocks } from './engine.js';
 import { estimateCost } from './cost.js';
 import { SPINNER_FRAMES } from './splash.js';
+import { agentLabel } from '../config/models.js';
 
 let _spinnerTick = 0;
 
@@ -460,8 +461,7 @@ export function renderModelOverlay(width) {
   tui.modelList.forEach((entry, i) => {
     if (entry.agent !== provider) {
       provider = entry.agent;
-      const providerLabel = provider === 'claude' ? 'Claude Code CLI' : provider === 'codex' ? 'Codex CLI' : 'OpenAI Codex';
-      lines.push(`  ${DIM}${providerLabel}${RESET}`);
+      lines.push(`  ${DIM}${agentLabel(provider)}${RESET}`);
     }
     const active = i === tui.modelIdx;
     const current = entry.agent === tui.modelCurrent?.agent && (entry.id ?? null) === (tui.modelCurrent?.model ?? null);

@@ -26,7 +26,12 @@ def output_text(response: dict[str, Any]) -> str:
 
 
 async def run(
-    prompt: str, model: str | None, schema: dict[str, Any], *, web_search: bool = False
+    prompt: str,
+    model: str | None,
+    schema: dict[str, Any],
+    *,
+    web_search: bool = False,
+    provider: str = CODEX_PROVIDER,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "input": prompt,
@@ -44,9 +49,14 @@ async def run(
         payload["model"] = model
     if web_search:
         payload["tools"] = [{"type": "web_search", "search_context_size": "low"}]
-    response = await responses_json(payload, selected=CODEX_PROVIDER)
+    response = await responses_json(payload, selected=provider)
     if response is None:
-        raise CodexAuthError("OpenAI Codex is not signed in.", code="login_required")
+        message = (
+            "OPENAI_API_KEY is missing."
+            if provider == "openai"
+            else "OpenAI Codex is not signed in."
+        )
+        raise CodexAuthError(message, code="login_required")
     result = json.loads(output_text(response))
     if not isinstance(result, dict):
         raise CodexAuthError("Codex returned an invalid result.", code="invalid_result")
@@ -55,13 +65,22 @@ async def run(
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="marked-codex")
+    parser.add_argument("--provider", choices=("openai", CODEX_PROVIDER), default=CODEX_PROVIDER)
     parser.add_argument("--model")
     parser.add_argument("--schema", required=True)
     parser.add_argument("--web-search", action="store_true")
     args = parser.parse_args()
     try:
         schema = json.loads(Path(args.schema).read_text(encoding="utf-8"))
-        result = asyncio.run(run(sys.stdin.read(), args.model, schema, web_search=args.web_search))
+        result = asyncio.run(
+            run(
+                sys.stdin.read(),
+                args.model,
+                schema,
+                web_search=args.web_search,
+                provider=args.provider,
+            )
+        )
         print(json.dumps(result, separators=(",", ":")))
     except (CodexAuthError, OSError, ValueError, json.JSONDecodeError) as error:
         print(f"marked-codex: {error}", file=sys.stderr)

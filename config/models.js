@@ -9,7 +9,16 @@ import { configPath } from './paths.js';
 // latest model; Codex ships its current catalogue on disk, so read that rather
 // than curate a list here that goes stale on the next release.
 
-export const AGENTS = ['claude', 'codex', 'openai-codex'];
+export const AGENTS = ['claude', 'claude-api', 'codex', 'codex-api', 'openai-codex'];
+export const API_KEY_AGENTS = ['claude-api', 'codex-api'];
+
+const AGENT_LABELS = {
+  claude: 'Claude Code CLI',
+  'claude-api': 'Claude API key',
+  codex: 'Codex CLI',
+  'codex-api': 'OpenAI API key',
+  'openai-codex': 'ChatGPT/Codex subscription',
+};
 
 const CODEX_MODELS_CACHE = path.join(os.homedir(), '.codex', 'models_cache.json');
 
@@ -32,9 +41,9 @@ const VALID_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** Every model on offer for one provider, best first, with a "default" row. */
 export function modelsFor(agent) {
-  const models = agent === 'claude' ? CLAUDE_MODELS : codexModels();
+  const models = agent.startsWith('claude') ? CLAUDE_MODELS : codexModels();
   return [
-    { id: null, label: `Default (whatever ${agent} is configured to use)` },
+    ...(agent === 'codex-api' ? [] : [{ id: null, label: `Default (whatever ${agent} is configured to use)` }]),
     ...models.filter(model => VALID_ID.test(model.id)),
   ];
 }
@@ -59,8 +68,12 @@ export function currentModel() {
 }
 
 export function modelLabel(agent, modelId) {
-  return modelId ? `${agent} · ${modelId}` : agent;
+  const label = agentLabel(agent);
+  return modelId ? `${label} · ${modelId}` : label;
 }
+
+export function agentLabel(agent) { return AGENT_LABELS[agent] ?? agent; }
+export function requiresApiKey(agent) { return API_KEY_AGENTS.includes(agent); }
 
 function codexModels() {
   try {

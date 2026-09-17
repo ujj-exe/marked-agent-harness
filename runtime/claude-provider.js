@@ -9,7 +9,12 @@ import path from 'node:path';
 const NO_MCP_CONFIG = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'config', 'no-mcp.json');
 
 export class ClaudeCodeProvider extends AgentProvider {
-  constructor(options = {}) { super({ name: 'claude' }); this.options = options; }
+  #apiKey;
+  constructor({ apiKey, name = 'claude', ...options } = {}) {
+    super({ name });
+    this.options = options;
+    this.#apiKey = apiKey;
+  }
 
   /**
    * @param {string} prompt
@@ -19,6 +24,7 @@ export class ClaudeCodeProvider extends AgentProvider {
    */
   async run(prompt, options = {}) {
     this.controller = new AbortController();
+    const env = this.#apiKey ? { ...process.env, ANTHROPIC_API_KEY: this.#apiKey } : process.env;
     // The final envelope arrives as one more line on the same stream, so it is
     // captured here rather than parsed back out of the whole transcript.
     let envelope = null;
@@ -30,8 +36,8 @@ export class ClaudeCodeProvider extends AgentProvider {
     try {
       const result = await runProcess(
         this.options.command || 'claude',
-        claudeArgs(this.options, prompt, process.env, options.schema, options.webSearch),
-        { cwd: options.cwd, timeoutMs: options.timeoutMs, signal: this.controller.signal, onStdout: read },
+        claudeArgs(this.options, prompt, env, options.schema, options.webSearch),
+        { cwd: options.cwd, env, timeoutMs: options.timeoutMs, signal: this.controller.signal, onStdout: read },
       );
       read.finish();
       tracker.finish();

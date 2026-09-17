@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claudeArgs } from './claude-provider.js';
+import { ClaudeCodeProvider, claudeArgs } from './claude-provider.js';
 
 describe('claude provider arguments', () => {
   it('skips --bare without an API key, because it never reads an OAuth login', () => {
@@ -7,6 +7,13 @@ describe('claude provider arguments', () => {
     // login it fails with an unexplained api_error and no tokens consumed.
     expect(claudeArgs({}, 'q', {})).not.toContain('--bare');
     expect(claudeArgs({}, 'q', { ANTHROPIC_API_KEY: 'sk-ant-x' })).toContain('--bare');
+  });
+
+  it('keeps a configured API key out of argv-visible options', () => {
+    const provider = new ClaudeCodeProvider({ name: 'claude-api', model: 'opus', apiKey: 'sk-ant-secret' });
+    expect(provider.name).toBe('claude-api');
+    expect(provider.options).toEqual({ model: 'opus' });
+    expect(JSON.stringify(provider)).not.toContain('sk-ant-secret');
   });
 
   it('keeps the isolation flags that work either way', () => {

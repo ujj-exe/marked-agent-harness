@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DESK, expandDeskCommand, parseCapabilityCommand, parseDeskCommand, parseLiveCommand, parseModelCommand } from './commands.js';
 
@@ -54,10 +57,12 @@ describe('/model', () => {
   it('accepts either reasoning provider, case-insensitively', () => {
     expect(parseModelCommand('/model codex')).toEqual({ agent: 'codex' });
     expect(parseModelCommand('/model Claude')).toEqual({ agent: 'claude' });
+    expect(parseModelCommand('/model claude-api')).toEqual({ agent: 'claude-api' });
+    expect(parseModelCommand('/model codex-api')).toEqual({ agent: 'codex-api' });
   });
 
   it('refuses an unknown provider instead of silently keeping the old one', () => {
-    expect(parseModelCommand('/model gpt5').error).toMatch(/Choose claude or codex/);
+    expect(parseModelCommand('/model gpt5').error).toMatch(/claude-api.*codex-api/);
   });
 
   it('is not confused by other input', () => {
@@ -119,12 +124,29 @@ describe('saveAgent', () => {
     const { saveAgent } = await import('./config.js');
     expect(() => saveAgent('gpt5')).toThrow(/Unknown agent/);
   });
+
+  it('stores provider keys in the permission-restricted config and honors env overrides', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'marked-provider-key-'));
+    const target = path.join(directory, 'config.json');
+    try {
+      const { agentApiKey, loadConfig, saveProviderKey } = await import('./config.js');
+      saveProviderKey('claude-api', `sk-ant-${'a'.repeat(24)}`, target);
+      const saved = JSON.parse(fs.readFileSync(target, 'utf8'));
+      expect(saved.providerKeys['claude-api']).toMatch(/^sk-ant-/);
+      expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+      expect(agentApiKey(saved, 'claude-api', { ANTHROPIC_API_KEY: 'from-env' })).toBe('from-env');
+      expect(() => saveProviderKey('codex-api', 'wrong', target)).toThrow(/start with sk-/);
+      expect(loadConfig().providerKeys).toBeDefined();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('model catalogue', () => {
   it('offers a default row plus real ids for each provider', async () => {
     const { modelsFor, isKnownModel } = await import('../config/models.js');
-    for (const agent of ['claude', 'codex']) {
+    for (const agent of ['claude', 'claude-api', 'codex']) {
       const models = modelsFor(agent);
       expect(models[0].id).toBeNull();
       expect(models.length).toBeGreaterThan(1);
@@ -132,6 +154,7 @@ describe('model catalogue', () => {
       expect(models.slice(1).every(model => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(model.id))).toBe(true);
       expect(isKnownModel(agent, models[1].id)).toBe(true);
     }
+    expect(modelsFor('codex-api')[0].id).toMatch(/^gpt-/);
     expect(isKnownModel('claude', 'opus')).toBe(true);
     expect(isKnownModel('claude', 'not-a-model')).toBe(false);
   });

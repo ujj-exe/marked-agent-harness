@@ -6,7 +6,12 @@ import { parseJsonOutput, runProcess } from './process.js';
 import { researchResultSchema } from './output-schema.js';
 
 export class OpenAICodexProvider extends AgentProvider {
-  constructor(options = {}) { super({ name: 'openai-codex' }); this.options = options; }
+  #apiKey;
+  constructor({ apiKey, name = 'openai-codex', provider = 'openai-codex', ...options } = {}) {
+    super({ name });
+    this.options = { ...options, provider };
+    this.#apiKey = apiKey;
+  }
 
   async run(prompt, options = {}) {
     this.controller = new AbortController();
@@ -14,10 +19,11 @@ export class OpenAICodexProvider extends AgentProvider {
     const schemaPath = path.join(dir, 'schema.json');
     fs.writeFileSync(schemaPath, JSON.stringify(options.schema || researchResultSchema), { mode: 0o600 });
     try {
-      const args = [...(this.options.model ? ['--model', this.options.model] : []), '--schema', schemaPath];
+      const args = ['--provider', this.options.provider, ...(this.options.model ? ['--model', this.options.model] : []), '--schema', schemaPath];
       if (options.webSearch) args.push('--web-search');
       const result = await runProcess(this.options.command || 'marked-codex', args, {
         cwd: options.cwd,
+        env: this.#apiKey ? { ...process.env, OPENAI_API_KEY: this.#apiKey } : process.env,
         input: prompt,
         timeoutMs: options.timeoutMs,
         signal: this.controller.signal,

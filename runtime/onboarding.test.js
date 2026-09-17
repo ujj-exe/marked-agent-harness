@@ -72,4 +72,45 @@ describe('onboarding', () => {
     expect(JSON.stringify(renders)).not.toContain(bad);
     expect(JSON.stringify(renders)).not.toContain(good);
   });
+
+  it('offers API-key runtimes and stores the selected provider key without rendering it', async () => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'marked-onboard-'));
+    const markedKey = `mk_test_${'m'.repeat(24)}`;
+    const providerKey = `sk-${'o'.repeat(32)}`;
+    const inputs = [markedKey, providerKey];
+    const renders = [];
+    const answers = [
+      { choice: { value: 'repo' } },
+      { choice: { value: 'codex-api' } },
+      { choice: { value: 'gpt-6-astra' } },
+    ];
+    const tui = {
+      ask: async ({ choices }) => {
+        if (choices.some(choice => choice.value === 'codex-api')) {
+          expect(choices).toEqual(expect.arrayContaining([
+            expect.objectContaining({ value: 'claude-api' }),
+            expect.objectContaining({ value: 'codex-api' }),
+          ]));
+        }
+        return answers.shift();
+      },
+      input: async () => ({ value: inputs.shift() }),
+      render: async payload => renders.push(payload),
+      notice: async message => renders.push({ notice: message }),
+    };
+
+    const result = await runOnboarding(tui, {
+      cwd: directory,
+      hasCommand: name => ['claude', 'marked-codex'].includes(name),
+      runCommand: async () => ({ stdout: '{"logged_in":false}' }),
+      fetchImpl: async () => ({ status: 200 }),
+    });
+
+    const saved = fs.readFileSync(result.target, 'utf8');
+    expect(JSON.parse(saved)).toMatchObject({
+      agent: 'codex-api',
+      providerKeys: { 'codex-api': providerKey },
+    });
+    expect(JSON.stringify(renders)).not.toContain(providerKey);
+  });
 });

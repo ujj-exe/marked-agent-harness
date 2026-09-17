@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_PATH } from '../config/paths.js';
-import { modelsFor } from '../config/models.js';
-import { writeConfig } from './config.js';
+import { agentLabel, modelsFor, requiresApiKey } from '../config/models.js';
+import { validateProviderKey, writeConfig } from './config.js';
 import { runProcess } from './process.js';
 
 const step = (current, title) => ({ current, total: 4, title });
@@ -113,6 +113,7 @@ export async function runOnboarding(tui, {
   await working(tui, 'STEP 3 OF 4 · CHOOSE RUNTIME', 'Looking for Claude Code, Codex, and existing Codex sign-in…');
   const claude = hasCommand('claude');
   const codex = hasCommand('codex');
+  const codexApi = hasCommand('marked-codex');
   const auth = await codexSignedIn(runCommand);
   const runtime = await tui.ask({
     step: step(3, 'CHOOSE RUNTIME'),
@@ -120,13 +121,35 @@ export async function runOnboarding(tui, {
     hint: `Detected · Claude Code ${claude ? '✓' : '○'} · Codex CLI ${codex ? '✓' : '○'} · Codex auth ${auth ? '✓' : '○'}`,
     choices: [
       ...(claude ? [{ name: 'Claude Code CLI', subtitle: 'Use the installed Claude CLI', value: 'claude' }] : []),
+      ...(claude ? [{ name: 'Claude API key', subtitle: 'Usage billed by Anthropic', value: 'claude-api' }] : []),
       ...(codex ? [{ name: 'Codex CLI', subtitle: 'Use the installed Codex CLI', value: 'codex' }] : []),
+      ...(codexApi ? [{ name: 'OpenAI API key', subtitle: 'Usage billed by OpenAI', value: 'codex-api' }] : []),
       { name: 'OpenAI Codex', subtitle: 'Use your ChatGPT/Codex subscription', value: 'openai-codex' },
     ],
   });
   if (!runtime.choice) throw new Error('Setup cancelled');
   const agent = runtime.choice.value;
   if (agent === 'openai-codex' && !auth) await loginCodex(tui, runCommand);
+
+  const providerKeys = {};
+  if (requiresApiKey(agent)) {
+    let hint = 'Input is hidden and stored locally with mode 0600';
+    while (true) {
+      const answer = await tui.input({
+        step: step(3, 'CONNECT MODEL API'),
+        prompt: `Paste your ${agentLabel(agent)}`,
+        hint,
+        secret: true,
+      });
+      if (answer.cancelled) throw new Error('Setup cancelled');
+      try {
+        providerKeys[agent] = validateProviderKey(agent, answer.value);
+        break;
+      } catch (error) {
+        hint = `${error.message} · try again`;
+      }
+    }
+  }
 
   const available = await discoveredModels(agent, runCommand);
   const model = await tui.ask({
@@ -137,11 +160,15 @@ export async function runOnboarding(tui, {
   });
   if (!model.choice) throw new Error('Setup cancelled');
 
+  let previous = {};
+  try { previous = JSON.parse(fs.readFileSync(target, 'utf8')); } catch {}
   writeConfig({
+    ...previous,
     apiKey,
     apiBase: 'https://api.marked.run',
     agent,
-    models: { [agent]: model.choice.value ?? null },
+    models: { ...previous.models, [agent]: model.choice.value ?? null },
+    providerKeys: { ...previous.providerKeys, ...providerKeys },
   }, target);
   // Reset to the desk: the splash is the home screen, and a setup summary the
   // user cannot act on is a worse landing than the commands they came for.
