@@ -103,13 +103,16 @@ describe('onboarding', () => {
       cwd: directory,
       hasCommand: name => ['claude', 'marked-codex'].includes(name),
       runCommand: async () => ({ stdout: '{"logged_in":false}' }),
-      fetchImpl: async () => ({ status: 200 }),
+      fetchImpl: async url => url.includes('api.openai.com')
+        ? { ok: true, json: async () => ({ data: [{ id: 'gpt-6-astra' }, { id: 'gpt-audio-1.5' }] }) }
+        : { status: 200 },
     });
 
     const saved = fs.readFileSync(result.target, 'utf8');
     expect(JSON.parse(saved)).toMatchObject({
       agent: 'codex-api',
       providerKeys: { 'codex-api': providerKey },
+      providerModels: { 'codex-api': [{ id: 'gpt-6-astra', label: 'gpt-6-astra' }] },
     });
     expect(JSON.stringify(renders)).not.toContain(providerKey);
   });

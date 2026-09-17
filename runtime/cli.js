@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { agentApiKey, agentModel, loadConfig, requireApiKey, saveAgent, saveApiKey, saveProviderKey } from './config.js';
+import { agentApiKey, agentModel, loadConfig, requireApiKey, saveAgent, saveApiKey, saveProviderKey, saveProviderModels } from './config.js';
 import { MarkedClient } from '../data/marked-client.js';
 import { createAgentProvider } from './providers.js';
-import { agentLabel, modelLabel, requiresApiKey } from '../config/models.js';
+import { agentLabel, modelLabel, requiresApiKey, resolveAgent } from '../config/models.js';
 import { CancelledError, MarkedOrchestrator } from './orchestrator.js';
 import { parseMnemonic } from './mnemonics.js';
 import { createWorld, parseWorldCommand, worldBlocks, setChartView, worldScope, stepTab } from './world.js';
@@ -20,8 +20,10 @@ import { runCapability } from './capabilities.js';
 import { fetchLiveTape, liveTapePayload } from './live-tape.js';
 import { applyAnswer, companyClarification, nextClarification } from './clarify.js';
 import { resolvePlan } from './plan.js';
-import { runOnboarding } from './onboarding.js';
+import { codexSignedIn, loginCodex, runOnboarding } from './onboarding.js';
 import { checkForUpdate } from './update.js';
+import { discoverApiModels, discoverSubscriptionModels } from './model-discovery.js';
+import { runProcess } from './process.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let config = loadConfig();
@@ -41,7 +43,7 @@ Run with no question to open the terminal and type queries there.
 Options
 ${row('--onboard', 'Re-run setup: API key, runtime and model')}
 ${row('--update', 'Install the latest Marked release')}
-${row('--agent <name>', 'Reasoning runtime: claude[-api], codex[-api], openai-codex')}
+${row('--agent <name>', 'Reasoning runtime: claude[-api], codex, chatgpt[-api]')}
 ${row('--as-of <ISO-8601>', 'Answer as of a past timestamp instead of now')}
 ${row('--help, -h', 'Show this help')}
 
@@ -53,7 +55,7 @@ ${CAPABILITIES.map(([name, arg, desc]) => row(`${name} ${arg}`, desc)).join('\n'
 
 Terminal commands
 ${row('/marked <key>', 'Save a Marked API key without re-running setup')}
-${row('/model', 'Pick the reasoning runtime and model')}
+${row('/model · /models', 'Pick the reasoning runtime, authenticate and discover models')}
 ${row('/model claude opus', 'Set runtime and model directly, no picker')}
 ${row('/new', 'Start a fresh conversation')}
 ${row('/history', 'Show recent conversation turns')}
@@ -76,7 +78,7 @@ Config lives in ~/.marked/config.json. Get an API key at https://marked.run`);
 }
 
 const agentIndex = args.indexOf('--agent');
-const agentArg = agentIndex >= 0 ? args[agentIndex + 1] : config.agent;
+const agentArg = resolveAgent(agentIndex >= 0 ? args[agentIndex + 1] : config.agent);
 const asOfIndex = args.indexOf('--as-of');
 const asOf = asOfIndex >= 0 ? args[asOfIndex + 1] : new Date().toISOString();
 if (asOfIndex >= 0 && (!asOf || Number.isNaN(Date.parse(asOf)))) {
@@ -105,16 +107,45 @@ function configuredProvider(name, current = loadConfig()) {
   });
 }
 
-async function ensureProviderKey(name) {
-  if (!requiresApiKey(name) || agentApiKey(loadConfig(), name)) return;
-  const answer = await tui.input({
-    step: { current: 1, total: 1, title: `CONNECT ${agentLabel(name).toUpperCase()}` },
-    prompt: `Paste your ${agentLabel(name)}`,
-    hint: 'Stored locally in ~/.marked/config.json with mode 0600',
-    secret: true,
+async function chooseExposedModel(name, models, requested) {
+  if (requested && !['connect', 'authenticate', 'discover', 'discover-auth'].includes(requested) && models.some(model => model.id === requested)) return requested;
+  const answer = await tui.ask({
+    prompt: `Choose a model exposed by ${agentLabel(name)}`,
+    hint: 'Only text/reasoning models supported by Marked are shown.',
+    choices: models.map(model => ({ name: model.label, subtitle: model.id, value: model.id })),
   });
-  if (answer.cancelled) throw new Error('Model switch cancelled');
-  saveProviderKey(name, answer.value);
+  if (!answer.choice) throw new Error('Model switch cancelled');
+  return answer.choice.value;
+}
+
+async function prepareProviderSelection(name, requested) {
+  if (requiresApiKey(name)) {
+    let key = agentApiKey(loadConfig(), name);
+    const replace = requested === 'connect';
+    if (!key || replace) {
+      const answer = await tui.input({
+        step: { current: 1, total: 1, title: `CONNECT ${agentLabel(name).toUpperCase()}` },
+        prompt: `Paste your ${agentLabel(name)} key`,
+        hint: 'Hidden input · stored locally with mode 0600',
+        secret: true,
+      });
+      if (answer.cancelled) throw new Error('Model switch cancelled');
+      key = answer.value;
+    }
+    const models = await discoverApiModels(name, key);
+    if (!agentApiKey(loadConfig(), name) || replace) saveProviderKey(name, key);
+    saveProviderModels(name, models);
+    return chooseExposedModel(name, models, requested);
+  }
+  if (name === 'openai-codex') {
+    if (requested === 'authenticate' || !await codexSignedIn(runProcess)) {
+      await loginCodex(tui, runProcess, 'CHATGPT SUBSCRIPTION');
+    }
+    const models = await discoverSubscriptionModels();
+    saveProviderModels(name, models);
+    return chooseExposedModel(name, models, requested);
+  }
+  return requested;
 }
 
 /** Put one clarification to the user; returns the sharpened question or null. */
@@ -424,7 +455,10 @@ try {
     startAgent = setup.agent;
     await tui.setModel(modelLabel(setup.agent, setup.model));
   } else {
-    await ensureProviderKey(startAgent);
+    if (requiresApiKey(startAgent) && !agentApiKey(config, startAgent)) {
+      const model = await prepareProviderSelection(startAgent, agentModel(config, startAgent));
+      saveAgent(startAgent, model);
+    }
     config = loadConfig();
   }
   agent = configuredProvider(startAgent, config);
@@ -460,9 +494,11 @@ try {
       try {
         if (selection.error) throw new Error(selection.error);
         // A bare /model is handled by the TUI picker; treat it here as a no-op report.
-        if (selection.agent) await ensureProviderKey(selection.agent);
-        const chosen = selection.agent ? saveAgent(selection.agent, selection.model) : { agent: agent.name, model: agentModel(loadConfig(), agent.name) };
-        if (chosen.agent === 'codex-api' && !chosen.model) throw new Error('Choose an OpenAI model for codex-api.');
+        const requested = selection.agent
+          ? (Object.hasOwn(selection, 'model') ? selection.model : agentModel(loadConfig(), selection.agent))
+          : null;
+        const selectedModel = selection.agent ? await prepareProviderSelection(selection.agent, requested) : null;
+        const chosen = selection.agent ? saveAgent(selection.agent, selectedModel) : { agent: agent.name, model: agentModel(loadConfig(), agent.name) };
         if (selection.agent) {
           agent.cancel();
           agent = configuredProvider(chosen.agent);

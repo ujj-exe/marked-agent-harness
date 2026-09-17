@@ -429,7 +429,7 @@ function closeModelPicker() {
  */
 function runLocalCommand(text) {
   const cmd = text.toLowerCase();
-  if (cmd === '/model')  { openModelPicker(); return true; }
+  if (cmd === '/model' || cmd === '/models')  { openModelPicker(); return true; }
   if (cmd === '/help')   { toggleHelp(); return true; }
   if (cmd === '/save')   { saveCurrentReport(); return true; }
   if (cmd === '/load')   { openLoadPicker(); return true; }

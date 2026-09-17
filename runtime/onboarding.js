@@ -4,6 +4,7 @@ import { CONFIG_PATH } from '../config/paths.js';
 import { agentLabel, modelsFor, requiresApiKey } from '../config/models.js';
 import { validateProviderKey, writeConfig } from './config.js';
 import { runProcess } from './process.js';
+import { discoverApiModels, supportedOpenAIModels } from './model-discovery.js';
 
 const step = (current, title) => ({ current, total: 4, title });
 
@@ -39,14 +40,14 @@ async function command(name, args, options = {}) {
   return runProcess(name, args, options);
 }
 
-async function codexSignedIn(runCommand) {
+export async function codexSignedIn(runCommand) {
   try {
     const result = await runCommand('marked-auth', ['status']);
     return Boolean(JSON.parse(result.stdout).logged_in);
   } catch { return false; }
 }
 
-async function loginCodex(tui, runCommand) {
+export async function loginCodex(tui, runCommand, title = 'STEP 3 OF 4 · CHATGPT SUBSCRIPTION') {
   let output = '';
   await runCommand('marked-auth', ['login'], {
     onStdout: chunk => {
@@ -54,7 +55,7 @@ async function loginCodex(tui, runCommand) {
       void tui.render({
         _state: { stage: 'asking', agent: 'onboarding' },
         blocks: [
-          { divider: 'STEP 3 OF 4 · OPENAI CODEX' },
+          { divider: title },
           { text: output.trim() || 'Requesting a sign-in code…' },
         ],
       });
@@ -67,7 +68,8 @@ async function discoveredModels(agent, runCommand) {
   try {
     const result = await runCommand('marked-auth', ['models']);
     const live = result.stdout.split('\n').map(value => value.trim()).filter(Boolean);
-    if (live.length) return live.map(id => ({ id, label: id }));
+    const supported = supportedOpenAIModels(live);
+    if (supported.length) return supported;
   } catch {}
   return modelsFor(agent).filter(model => model.id);
 }
@@ -132,6 +134,7 @@ export async function runOnboarding(tui, {
   if (agent === 'openai-codex' && !auth) await loginCodex(tui, runCommand);
 
   const providerKeys = {};
+  const providerModels = {};
   if (requiresApiKey(agent)) {
     let hint = 'Input is hidden and stored locally with mode 0600';
     while (true) {
@@ -143,7 +146,9 @@ export async function runOnboarding(tui, {
       });
       if (answer.cancelled) throw new Error('Setup cancelled');
       try {
-        providerKeys[agent] = validateProviderKey(agent, answer.value);
+        const key = validateProviderKey(agent, answer.value);
+        providerModels[agent] = await discoverApiModels(agent, key, fetchImpl);
+        providerKeys[agent] = key;
         break;
       } catch (error) {
         hint = `${error.message} · try again`;
@@ -151,7 +156,7 @@ export async function runOnboarding(tui, {
     }
   }
 
-  const available = await discoveredModels(agent, runCommand);
+  const available = providerModels[agent] ?? await discoveredModels(agent, runCommand);
   const model = await tui.ask({
     step: step(4, 'CHOOSE MODEL'),
     prompt: 'Choose a model',
@@ -169,6 +174,10 @@ export async function runOnboarding(tui, {
     agent,
     models: { ...previous.models, [agent]: model.choice.value ?? null },
     providerKeys: { ...previous.providerKeys, ...providerKeys },
+    providerModels: {
+      ...previous.providerModels,
+      ...(available.length && (requiresApiKey(agent) || agent === 'openai-codex') ? { [agent]: available } : {}),
+    },
   }, target);
   // Reset to the desk: the splash is the home screen, and a setup summary the
   // user cannot act on is a worse landing than the commands they came for.

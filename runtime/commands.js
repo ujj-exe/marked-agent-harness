@@ -1,4 +1,4 @@
-import { AGENTS, isKnownModel } from '../config/models.js';
+import { AGENTS, isKnownModel, resolveAgent } from '../config/models.js';
 
 const DEFAULTS = {
   macro: 'Analyze the current India macro outlook across RBI policy, inflation, growth, liquidity, the rupee and rates.',
@@ -140,14 +140,14 @@ function error(command, message) { return { command, query: null, intent: null, 
  * Returns null for anything that is not the command.
  */
 export function parseModelCommand(input) {
-  const match = String(input).trim().match(/^\/model(?:\s+(\S+)(?:\s+(\S+))?)?$/i);
+  const match = String(input).trim().match(/^\/models?(?:\s+(\S+)(?:\s+(\S+))?)?$/i);
   if (!match) return null;
   if (!match[1]) return { agent: null };
 
   const [reference, inlineModel] = match[1].split(':');
-  const agent = reference.toLowerCase();
+  const agent = resolveAgent(reference);
   const named = match[2] ?? inlineModel;
-  if (!AGENTS.includes(agent)) return { agent: null, error: `Unknown provider "${reference}". Choose ${AGENTS.join(' or ')}.` };
+  if (!AGENTS.includes(agent)) return { agent: null, error: `Unknown provider "${reference}". Choose claude, claude-api, codex, chatgpt, or chatgpt-api.` };
   // No model named keeps whatever this provider was last set to; `default`
   // clears it back to the CLI's own configuration.
   if (named === undefined) return { agent };

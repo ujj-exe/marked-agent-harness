@@ -7,11 +7,27 @@
 import { renderBlocks } from './engine.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tui } from './state.js';
-import { focusIndicator, renderHelpOverlay, renderInputOverlay, renderQueryOverlay, buildFooter, buildHeader, paintScreen, paintWithScroll, footerRow, PROMPT_ROWS, renderPromptBlock, fillHeight } from './render.js';
+import { focusIndicator, renderHelpOverlay, renderInputOverlay, renderModelOverlay, renderQueryOverlay, buildFooter, buildHeader, paintScreen, paintWithScroll, footerRow, PROMPT_ROWS, renderPromptBlock, fillHeight } from './render.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+
+it('shows missing API keys in /models and offers connection', () => {
+  tui.modelList = [{ agent: 'codex-api', id: 'connect', label: 'Set API key · discover models', status: 'key not set' }];
+  tui.modelIdx = 0;
+  const text = strip(renderModelOverlay(100));
+  expect(text).toContain('ChatGPT API · key not set');
+  expect(text).toContain('Set API key · discover models');
+});
+
+it('shows missing ChatGPT subscription auth in /models', () => {
+  tui.modelList = [{ agent: 'openai-codex', id: 'authenticate', label: 'Sign in · discover subscription models', status: 'not signed in' }];
+  tui.modelIdx = 0;
+  const text = strip(renderModelOverlay(100));
+  expect(text).toContain('ChatGPT subscription · not signed in');
+  expect(text).toContain('Sign in · discover subscription models');
+});
 
 // ── focusIndicator ──────────────────────────────────────────────────────────
 

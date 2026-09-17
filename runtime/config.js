@@ -1,18 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_PATH, MARKED_HOME, configPath } from '../config/paths.js';
-import { AGENTS, API_KEY_AGENTS, isKnownModel } from '../config/models.js';
+import { AGENTS, API_KEY_AGENTS, isKnownModel, resolveAgent } from '../config/models.js';
 
 export function loadConfig() {
   let file = {};
   try { file = JSON.parse(fs.readFileSync(configPath(), 'utf8')); } catch {}
+  const agent = resolveAgent(process.env.MARKED_AGENT || file.agent || 'codex');
   return {
     ...file,
     apiKey: process.env.MARKED_API_KEY || file.apiKey || file.api_key || '',
     apiBase: process.env.MARKED_API_BASE || file.apiBase || 'https://api.marked.run',
-    agent: process.env.MARKED_AGENT || file.agent || 'codex',
-    models: { ...file.models, ...(process.env.MARKED_MODEL ? { [process.env.MARKED_AGENT || file.agent || 'codex']: process.env.MARKED_MODEL } : {}) },
+    agent,
+    models: { ...file.models, ...(process.env.MARKED_MODEL ? { [agent]: process.env.MARKED_MODEL } : {}) },
     providerKeys: file.providerKeys ?? {},
+    providerModels: file.providerModels ?? {},
     home: MARKED_HOME,
   };
 }
@@ -37,16 +39,30 @@ export function validateProviderKey(agent, apiKey) {
 }
 
 export function saveProviderKey(agent, apiKey, target = configPath()) {
-  const current = loadConfig();
+  const current = readStoredConfig(target);
   const key = validateProviderKey(agent, apiKey);
   writeConfig({ ...current, providerKeys: { ...current.providerKeys, [agent]: key } }, target);
   return key;
+}
+
+export function saveProviderModels(agent, models, target = configPath()) {
+  if (![...API_KEY_AGENTS, 'openai-codex'].includes(agent)) throw new Error(`${agent} does not expose discoverable models.`);
+  const normalized = [...new Map((models ?? [])
+    .filter(model => model && typeof model.id === 'string')
+    .map(model => [model.id, { id: model.id, label: String(model.label || model.id).slice(0, 80) }])).values()];
+  const current = readStoredConfig(target);
+  writeConfig({ ...current, providerModels: { ...current.providerModels, [agent]: normalized } }, target);
+  return normalized;
 }
 
 export function agentApiKey(config = loadConfig(), agent = config.agent, env = process.env) {
   if (agent === 'claude-api') return env.ANTHROPIC_API_KEY || config.providerKeys?.[agent] || '';
   if (agent === 'codex-api') return env.OPENAI_API_KEY || config.providerKeys?.[agent] || '';
   return '';
+}
+
+function readStoredConfig(target) {
+  try { return JSON.parse(fs.readFileSync(target, 'utf8')); } catch { return {}; }
 }
 
 export function writeConfig(file, target = CONFIG_PATH) {

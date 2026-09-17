@@ -231,19 +231,23 @@ whatever that CLI accepts. Switch at any time with `/model`.
 | Runtime | Auth | Models |
 | --- | --- | --- |
 | `claude` | your Claude Code CLI | `opus`, `fable`, `sonnet`, `haiku`, aliases that always resolve to the latest of each |
-| `claude-api` | Anthropic API key stored locally | the same Claude aliases |
+| `claude-api` | Anthropic API key stored locally | models exposed by that key |
 | `codex` | your Codex CLI | read live from the CLI's own catalogue on disk |
-| `codex-api` | OpenAI API key stored locally | the Codex catalogue |
-| `openai-codex` | ChatGPT device code | read from your account via `marked-auth models` |
+| `chatgpt` | ChatGPT device code | models exposed by the subscription auth |
+| `chatgpt-api` | ChatGPT/OpenAI API key stored locally | supported models exposed by that key |
 
 Codex models are deliberately not curated in this repository, because a list
 written here goes stale on the next release. Choosing "Default" leaves the
 model to whatever the CLI is already configured to use.
 
-`/model` lists CLI, subscription and API-key modes separately. Selecting
-`claude-api` or `codex-api` asks for the key once through hidden input and
-stores it in the active `~/.marked/config.json` or repository config at mode
-0600. `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` override saved provider keys.
+`/model` and `/models` list Claude Code CLI, Claude API, Codex CLI, ChatGPT
+subscription and ChatGPT API separately. An API row says `key not set` until
+connected; selecting it reuses the hidden key-input TUI, authenticates against
+the provider's model endpoint and shows only supported text/reasoning models
+that credential exposes. The subscription row similarly shows sign-in state
+and can launch device authentication directly from `/models`. Keys are stored
+in the active config at mode 0600;
+`ANTHROPIC_API_KEY` and `OPENAI_API_KEY` override saved keys.
 
 `openai-codex` authenticates through ChatGPT device code and uses the Codex
 backend, not the standard OpenAI API-key endpoint, which stays separate. Manage

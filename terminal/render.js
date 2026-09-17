@@ -122,7 +122,7 @@ export function renderHelpOverlay(width) {
     K('/history', 'Show saved conversation turns'),
     K(`${LIVE[0]} ${LIVE[1]}`, LIVE[2]),
     K('/new', 'Start a fresh conversation'),
-    K('/model', 'Pick the reasoning provider and model'),
+    K('/model  /models', 'Pick the provider, connect keys and discover models'),
     K('/model claude opus', 'Set provider and model without the picker'),
     K('/1 … /9', 'Run a follow-up query'),
     '',
@@ -144,7 +144,7 @@ export function renderHelpOverlay(width) {
 const DESK_COMMANDS = new Set([
   ...DESK.map(([name]) => name.slice(1)),
   ...CAPABILITIES.map(([name]) => name.slice(1)),
-  'marked', 'model', 'new', 'history', 'help', 'live',
+  'marked', 'model', 'models', 'new', 'history', 'help', 'live',
 ]);
 
 /** Light up a recognised leading command so it reads as activated. */
@@ -461,7 +461,7 @@ export function renderModelOverlay(width) {
   tui.modelList.forEach((entry, i) => {
     if (entry.agent !== provider) {
       provider = entry.agent;
-      lines.push(`  ${DIM}${agentLabel(provider)}${RESET}`);
+      lines.push(`  ${DIM}${agentLabel(provider)}${entry.status ? ` · ${entry.status}` : ''}${RESET}`);
     }
     const active = i === tui.modelIdx;
     const current = entry.agent === tui.modelCurrent?.agent && (entry.id ?? null) === (tui.modelCurrent?.model ?? null);

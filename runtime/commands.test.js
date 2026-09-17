@@ -62,15 +62,20 @@ describe('/model', () => {
   });
 
   it('refuses an unknown provider instead of silently keeping the old one', () => {
-    expect(parseModelCommand('/model gpt5').error).toMatch(/claude-api.*codex-api/);
+    expect(parseModelCommand('/model gpt5').error).toMatch(/claude-api.*chatgpt-api/);
   });
 
   it('is not confused by other input', () => {
-    expect(parseModelCommand('/models')).toBeNull();
+    expect(parseModelCommand('/models')).toEqual({ agent: null });
     expect(parseModelCommand('What model does Reliance use?')).toBeNull();
     // A partial command must not open the picker while the user is still typing.
     expect(parseModelCommand('/m')).toBeNull();
     expect(parseModelCommand('/mod')).toBeNull();
+  });
+
+  it('accepts user-facing ChatGPT aliases', () => {
+    expect(parseModelCommand('/model chatgpt')).toEqual({ agent: 'openai-codex' });
+    expect(parseModelCommand('/models chatgpt-api')).toEqual({ agent: 'codex-api' });
   });
 
   it('pins a model, inline or as a second word', () => {
@@ -129,10 +134,12 @@ describe('saveAgent', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'marked-provider-key-'));
     const target = path.join(directory, 'config.json');
     try {
-      const { agentApiKey, loadConfig, saveProviderKey } = await import('./config.js');
+      const { agentApiKey, loadConfig, saveProviderKey, saveProviderModels } = await import('./config.js');
       saveProviderKey('claude-api', `sk-ant-${'a'.repeat(24)}`, target);
+      saveProviderModels('claude-api', [{ id: 'claude-opus-5', label: 'Claude Opus 5' }], target);
       const saved = JSON.parse(fs.readFileSync(target, 'utf8'));
       expect(saved.providerKeys['claude-api']).toMatch(/^sk-ant-/);
+      expect(saved.providerModels['claude-api']).toEqual([{ id: 'claude-opus-5', label: 'Claude Opus 5' }]);
       expect(fs.statSync(target).mode & 0o777).toBe(0o600);
       expect(agentApiKey(saved, 'claude-api', { ANTHROPIC_API_KEY: 'from-env' })).toBe('from-env');
       expect(() => saveProviderKey('codex-api', 'wrong', target)).toThrow(/start with sk-/);
@@ -146,7 +153,7 @@ describe('saveAgent', () => {
 describe('model catalogue', () => {
   it('offers a default row plus real ids for each provider', async () => {
     const { modelsFor, isKnownModel } = await import('../config/models.js');
-    for (const agent of ['claude', 'claude-api', 'codex']) {
+    for (const agent of ['claude', 'codex']) {
       const models = modelsFor(agent);
       expect(models[0].id).toBeNull();
       expect(models.length).toBeGreaterThan(1);
@@ -154,7 +161,14 @@ describe('model catalogue', () => {
       expect(models.slice(1).every(model => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(model.id))).toBe(true);
       expect(isKnownModel(agent, models[1].id)).toBe(true);
     }
-    expect(modelsFor('codex-api')[0].id).toMatch(/^gpt-/);
+    for (const agent of ['claude-api', 'codex-api']) {
+      const connect = modelsFor(agent)[0];
+      expect(['connect', 'discover']).toContain(connect.id);
+      expect(connect.label).toContain('key');
+    }
+    const subscription = modelsFor('openai-codex')[0];
+    expect(['authenticate', 'discover-auth']).toContain(subscription.id);
+    expect(subscription.label).toContain('subscription');
     expect(isKnownModel('claude', 'opus')).toBe(true);
     expect(isKnownModel('claude', 'not-a-model')).toBe(false);
   });
