@@ -163,6 +163,12 @@ export class MarkedOrchestrator {
      * the meantime. Every id here is reused by the final block list, so
      * `applyPatch` replaces these in place instead of stacking duplicates.
      */
+    let renderQueue = Promise.resolve();
+    const render = payload => {
+      const next = renderQueue.then(() => this.tui.render(payload));
+      renderQueue = next.catch(() => {});
+      return next;
+    };
     const gather = async (label, fn, panels) => {
       let value;
       try {
@@ -177,7 +183,7 @@ export class MarkedOrchestrator {
         // does not render is still data the packet needs.
         try { blocks.push(...panels(value)); } catch { /* keep the tick, drop the panel */ }
       }
-      await this.tui.render({
+      await render({
         patch: true,
         blocks,
         _state: { stage: 'gathering', agent: agentName, query: question, tools: { called, total: 11, current: label } },
@@ -187,16 +193,52 @@ export class MarkedOrchestrator {
     const chartLabel = `${security.exchange}:${security.symbol}`;
     const at = pointInTime ? { as_of: asOf } : {};
 
-    const price = await gather(
-      'prices loaded',
-      () => this.data.prices({ ticker: security.symbol, exchange: security.exchange || 'NSE', latest: false, limit: 30, ...at }),
-      value => [
-        { panel: 'quote', id: 'quote', data: { ticker: security.symbol, name: entity.company.common_name, price: latestPrice(value), changePct: 0, marketCap: 0 } },
-        { panel: 'chart', id: 'price-chart', data: priceChart(value, chartLabel) },
-      ],
-    );
-    const financials = await gather('financials loaded', () => this.data.financials({ ticker: security.symbol, period: 'annual', basis: 'consolidated', as_of: asOf, limit: 200 }));
-    const metrics = await gather('metrics loaded', () => this.data.metrics({ ticker: security.symbol, period: 'annual', basis: 'consolidated', as_of: asOf }));
+    const [price, financials, metrics, quote, news, market, balance, shareholding, filings, actions, events] = await Promise.all([
+      gather(
+        'prices loaded',
+        () => this.data.prices({ ticker: security.symbol, exchange: security.exchange || 'NSE', latest: false, limit: 30, ...at }),
+        value => [
+          { panel: 'quote', id: 'quote', data: { ticker: security.symbol, name: entity.company.common_name, price: latestPrice(value), changePct: 0, marketCap: 0 } },
+          { panel: 'chart', id: 'price-chart', data: priceChart(value, chartLabel) },
+        ],
+      ),
+      gather('financials loaded', () => this.data.financials({ ticker: security.symbol, period: 'annual', basis: 'consolidated', as_of: asOf, limit: 200 })),
+      gather('metrics loaded', () => this.data.metrics({ ticker: security.symbol, period: 'annual', basis: 'consolidated', as_of: asOf })),
+      gather(
+        'quote loaded',
+        () => this.data.quote
+          ? this.data.quote({ symbol: security.symbol, exchange: security.exchange || 'NSE' })
+          : Promise.resolve({ data: null }),
+      ),
+      gather(
+        'news loaded',
+        () => this.data.news
+          ? this.data.news({ company: security.symbol, limit: 20 })
+          : Promise.resolve({ data: [] }),
+      ),
+      gather(
+        'market context loaded',
+        () => this.data.marketContext ? this.data.marketContext() : Promise.resolve({ data: null }),
+      ),
+      gather(
+        'balance sheet loaded',
+        () => this.data.balanceSheet
+          ? this.data.balanceSheet({ ticker: security.symbol, basis: 'consolidated', as_of: asOf, limit: 400, concept: REQUIRED_CONCEPTS.join(',') })
+          : Promise.resolve({ data: [] }),
+      ),
+      gather(
+        'shareholding loaded',
+        () => this.data.shareholding({ ticker: security.symbol, holders: true, limit: 4, ...at }),
+        value => [{ panel: 'holders', id: 'holders', data: holderPanel(value) }],
+      ),
+      gather(
+        'filings loaded',
+        () => this.data.filings({ ticker: security.symbol, limit: 10, ...at }),
+        value => [{ panel: 'filings', id: 'filings', data: filingPanel(value) }],
+      ),
+      gather('corporate actions loaded', () => this.data.corporateActions({ ticker: security.symbol, limit: 10, ...at })),
+      gather('events loaded', () => this.data.events({ ticker: security.symbol, limit: 10, ...at })),
+    ]);
     // A question about a filing or an event is answered by documents. Carrying a
     // decade of the income statement into that packet is noise, not context, so
     // narrow the financial history to the years that frame the disclosure.
@@ -207,51 +249,6 @@ export class MarkedOrchestrator {
     const years = narrative ? 2 : 5;
     const scopedFinancials = temporal ? scopeFiscalYear(financials, temporal.fiscal_year) : recentFiscalYears(financials, years);
     const scopedMetrics = temporal ? scopeFiscalYear(metrics, temporal.fiscal_year) : recentFiscalYears(metrics, years);
-    // The latest quote carries what the OHLCV series does not: the real 52-week
-    // range, the day's move, and market capitalisation. The header was deriving
-    // a 30-day proxy for all three.
-    const quote = await gather(
-      'quote loaded',
-      () => this.data.quote
-        ? this.data.quote({ symbol: security.symbol, exchange: security.exchange || 'NSE' })
-        : Promise.resolve({ data: null }),
-    );
-    // News and the macro tape are not company filings, but a question like
-    // "what does Middle East oil do to this company" cannot be answered from
-    // filings alone. Both are retrieved with the packet so the reasoning step
-    // has them to hand rather than inventing the linkage.
-    const news = await gather(
-      'news loaded',
-      () => this.data.news
-        ? this.data.news({ company: security.symbol, limit: 20 })
-        : Promise.resolve({ data: [] }),
-    );
-    const market = await gather(
-      'market context loaded',
-      () => this.data.marketContext ? this.data.marketContext() : Promise.resolve({ data: null }),
-    );
-    const balance = await gather(
-      'balance sheet loaded',
-      () => this.data.balanceSheet
-        // Ask for exactly the concepts the metric library reads. An unfiltered
-        // request is truncated by the server and drops the newest year, which
-        // is the one every ratio needs.
-        ? this.data.balanceSheet({ ticker: security.symbol, basis: 'consolidated', as_of: asOf, limit: 400, concept: REQUIRED_CONCEPTS.join(',') })
-        : Promise.resolve({ data: [] }),
-    );
-    const shareholding = await gather(
-      'shareholding loaded',
-      () => this.data.shareholding({ ticker: security.symbol, holders: true, limit: 4, ...at }),
-      value => [{ panel: 'holders', id: 'holders', data: holderPanel(value) }],
-    );
-    const filings = await gather(
-      'filings loaded',
-      () => this.data.filings({ ticker: security.symbol, limit: 10, ...at }),
-      value => [{ panel: 'filings', id: 'filings', data: filingPanel(value) }],
-    );
-    const actions = await gather('corporate actions loaded', () => this.data.corporateActions({ ticker: security.symbol, limit: 10, ...at }));
-    const events = await gather('events loaded', () => this.data.events({ ticker: security.symbol, limit: 10, ...at }));
-
     const checked = checkFinancials({ entity, security, financials: scopedFinancials, metrics: scopedMetrics, balance });
     const packet = {
       focus: route,

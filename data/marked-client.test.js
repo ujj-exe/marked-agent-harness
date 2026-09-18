@@ -1,16 +1,57 @@
 import { describe, expect, it } from 'vitest';
-import { MarkedClient, normalizeCompany, normalizeSecurity } from './marked-client.js';
+import { MarkedClient, normalizeCompany, normalizeSecurity, planFromHeaders } from './marked-client.js';
 
-function response(body, status = 200) {
+function response(body, status = 200, headers = { 'x-quota-remaining': '19' }) {
   return {
     ok: status < 400,
     status,
-    headers: { entries: () => [['x-quota-remaining', '19']] },
+    headers: { entries: () => Object.entries(headers) },
     text: async () => JSON.stringify(body),
   };
 }
 
 describe('MarkedClient', () => {
+  it('infers plan concurrency from authenticated rate-limit headers', () => {
+    expect(planFromHeaders({ 'ratelimit-limit': '60', 'x-quota-limit': '2000' })).toMatchObject({ name: 'developer', concurrency: 2 });
+    expect(planFromHeaders({ 'ratelimit-limit': '300', 'x-quota-limit': '25000' })).toMatchObject({ name: 'builder', concurrency: 10 });
+    expect(planFromHeaders({ 'ratelimit-limit': '1200', 'x-quota-limit': '500000' })).toMatchObject({ name: 'scale', concurrency: 25 });
+    expect(planFromHeaders({})).toBeNull();
+  });
+
+  it('learns the authenticated key plan from a response', async () => {
+    const client = new MarkedClient({ apiKey: 'mk_test', fetchImpl: async () => response(
+      { data: [] },
+      200,
+      { 'ratelimit-limit': '300', 'x-quota-limit': '25000' },
+    ) });
+    await client.instruments();
+    expect(client.plan).toMatchObject({ name: 'builder', concurrency: 10 });
+  });
+
+  it('limits every caller to the authenticated plan concurrency', async () => {
+    const releases = [];
+    let started = 0;
+    let active = 0;
+    let maxActive = 0;
+    const client = new MarkedClient({ apiKey: 'mk_test', fetchImpl: async () => {
+      started += 1;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise(resolve => releases.push(resolve));
+      active -= 1;
+      return response({ data: [] }, 200, { 'ratelimit-limit': '60', 'x-quota-limit': '2000' });
+    } });
+    const requests = Promise.all(Array.from({ length: 5 }, () => client.instruments()));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(started).toBe(2);
+    while (started < 5 || releases.length) {
+      releases.splice(0).forEach(release => release());
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await requests;
+    expect(maxActive).toBe(2);
+  });
+
   it('uses the Marked auth header and response envelope', async () => {
     let request;
     const client = new MarkedClient({ apiKey: 'mk_test', fetchImpl: async (url, options) => {

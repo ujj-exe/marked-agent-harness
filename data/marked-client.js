@@ -1,4 +1,18 @@
 const DEFAULT_BASE = 'https://api.marked.run';
+// ponytail: custom Enterprise concurrency stays capped at Scale's 25 until the API exposes a concurrency-limit header.
+const PLANS = [
+  { name: 'scale', requestsPerMinute: 1200, monthlyRequests: 500_000, concurrency: 25 },
+  { name: 'builder', requestsPerMinute: 300, monthlyRequests: 25_000, concurrency: 10 },
+  { name: 'developer', requestsPerMinute: 60, monthlyRequests: 2_000, concurrency: 2 },
+];
+
+export function planFromHeaders(headers = {}) {
+  const requestsPerMinute = Number(headers['ratelimit-limit']);
+  const monthlyRequests = Number(headers['x-quota-limit']);
+  if (!requestsPerMinute && !monthlyRequests) return null;
+  return PLANS.find(plan => requestsPerMinute >= plan.requestsPerMinute || monthlyRequests >= plan.monthlyRequests)
+    ?? PLANS.at(-1);
+}
 
 export class MarkedApiError extends Error {
   constructor(message, { status, code, headers, details, reference, choices } = {}) {
@@ -33,9 +47,34 @@ export class MarkedClient {
     this.apiKey = apiKey || '';
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.fetch = fetchImpl;
+    this.plan = PLANS.at(-1);
+    this.activeRequests = 0;
+    this.requestQueue = [];
   }
 
-  async request(route, { method = 'GET', params, body, signal } = {}) {
+  async request(route, options = {}) {
+    await this.acquire();
+    try { return await this.requestNow(route, options); }
+    finally { this.release(); }
+  }
+
+  async acquire() {
+    if (this.activeRequests < this.plan.concurrency) {
+      this.activeRequests += 1;
+      return;
+    }
+    await new Promise(resolve => this.requestQueue.push(resolve));
+  }
+
+  release() {
+    this.activeRequests -= 1;
+    while (this.activeRequests < this.plan.concurrency && this.requestQueue.length) {
+      this.activeRequests += 1;
+      this.requestQueue.shift()();
+    }
+  }
+
+  async requestNow(route, { method = 'GET', params, body, signal } = {}) {
     const suffix = queryString(params);
     const url = `${this.baseUrl}${route}${suffix ? `?${suffix}` : ''}`;
     const headers = { Accept: 'application/json' };
@@ -55,6 +94,8 @@ export class MarkedClient {
       await new Promise(resolve => setTimeout(resolve, Math.min(retryAfter, 10) * 1000));
     }
     const text = await response.text();
+    const responseHeaders = Object.fromEntries(response.headers?.entries?.() || []);
+    this.plan = planFromHeaders(responseHeaders) ?? this.plan;
     let payload;
     try { payload = text ? JSON.parse(text) : null; } catch { payload = { error: text }; }
     if (!response.ok) {
@@ -68,12 +109,12 @@ export class MarkedClient {
         status: response.status,
         code: payload?.code,
         details: payload,
-        headers: Object.fromEntries(response.headers?.entries?.() || []),
+        headers: responseHeaders,
       });
     }
     return {
       ...envelope(payload),
-      headers: Object.fromEntries(response.headers?.entries?.() || []),
+      headers: responseHeaders,
     };
   }
 
