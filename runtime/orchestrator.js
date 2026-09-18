@@ -814,7 +814,9 @@ export class MarkedOrchestrator {
       }
 
       try {
-        const attemptEvidence = [...baseEvidence, ...webSourceEvidence(result.sources)];
+        // A model may repeat a URL already present in packet metadata. It only
+        // becomes web evidence when this round was actually allowed to open it.
+        const attemptEvidence = [...baseEvidence, ...(searchEnabled ? webSourceEvidence(result.sources) : [])];
         const attempt = validateClaims(validateResearchResult(result), attemptEvidence);
         const attemptAudit = auditResearchResult({
           result: attempt.result,
@@ -901,8 +903,8 @@ export class MarkedOrchestrator {
 
 function synthesisPrompt({ context, mode, procedure, performanceAttribution, webSearch, previous }) {
   const retrieval = webSearch.enabled
-    ? `The current evidence is insufficient for part of the requested analysis (${webSearch.reason}). Use native search to fill those gaps before concluding. Do not downgrade the analysis merely because the initial packet is incomplete. Search primary sources first and reputable secondary sources only where primary evidence is unavailable. Put each direct URL used in sources in citation order; those URLs become web_01, web_02, and so on. Cite those ids in external_context claims. Do not stop at the initial packet boundary.`
-    : 'Do not retrieve data; use only the supplied packet.';
+    ? `The current evidence is insufficient for part of the requested analysis (${webSearch.reason}). Use native search to fill those gaps before concluding. When a packet record has a source_url but no excerpt or document text, open that exact URL and read the source before describing what it says; its title and metadata are not document contents. Do not downgrade the analysis merely because the initial packet is incomplete. Search primary sources first and reputable secondary sources only where primary evidence is unavailable. Put each direct URL used in sources in citation order; those URLs become web_01, web_02, and so on. Cite those ids in external_context claims. Do not stop at the initial packet boundary.`
+    : 'Do not retrieve data; use only the supplied packet. A source_url without an excerpt is metadata only and does not establish the document contents.';
   const repair = previous
     ? `\n\nThe previous answer failed the deterministic completion gate. Return a complete replacement, not a patch. Repair exactly these issues and remove any assertion that still cannot be supported:\n${JSON.stringify(previous.audit.material_issues)}`
     : '';

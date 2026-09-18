@@ -34,4 +34,25 @@ describe('native web-search policy', () => {
       mandateCoverage: [{ id: 'business_mix', material: true, status: 'missing' }],
     })).toEqual({ enabled: true, reason: 'mandate_gap:business_mix' });
   });
+
+  it('opens source-only documents before answering event questions', () => {
+    expect(webSearchDecision({
+      question: 'What is the recent allotment announcement about?',
+      packet: {
+        data_plan: { route: 'event_research' },
+        companies: [{ datasets: { events: [{ title: 'Allotment of Securities', source_url: 'https://example.com/allotment.pdf', document_id: null }] } }],
+      },
+      mandateCoverage: [{ id: 'event_linkage', material: true, status: 'covered' }],
+    })).toEqual({ enabled: true, reason: 'source_document_content_missing' });
+  });
+
+  it('opens source-only documents inherited from a company world', () => {
+    expect(webSearchDecision({
+      question: 'What was the summary of the recent investor meeting?',
+      packet: {
+        data_plan: { route: 'factual_lookup' },
+        workspace_context: { data: { events: [{ title: 'Investor meeting', source_url: 'https://example.com/meeting.pdf', document_id: null }] } },
+      },
+    })).toEqual({ enabled: true, reason: 'source_document_content_missing' });
+  });
 });

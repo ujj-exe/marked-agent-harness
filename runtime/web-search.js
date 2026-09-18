@@ -4,6 +4,7 @@ const PEERS = /\b(?:peers?|competitors?|comparable companies|compares? with)\b/i
 const COMPARISON = /\b(?:compare|comparison|versus|vs\.?|relative to)\b/i;
 const VALUATION_HISTORY = /\b(?:valuation|p\/e|price[ -]to[ -]earnings|ev\/ebitda)\b.{0,60}\b(?:history|historical|change[ds]?|over|during|years?)\b|\b(?:history|historical|change[ds]?|over|during|years?)\b.{0,60}\b(?:valuation|p\/e|price[ -]to[ -]earnings|ev\/ebitda)\b/i;
 const SEGMENT_MIX = /\bsegment(?: mix| breakdown| contribution| revenue| profit)?\b/i;
+const SOURCE_CONTENT = /\b(?:summary|summari[sz]e|what (?:was|is|did)|discuss(?:ed|ion)?|transcript|announcement|filing|meeting|conference call)\b/i;
 
 /** Decide whether the final provider receives its native web-search tool. */
 export function webSearchDecision({ question, intent = {}, packet = {}, evidence = [], pointInTime = false, mandateCoverage = [] }) {
@@ -13,6 +14,12 @@ export function webSearchDecision({ question, intent = {}, packet = {}, evidence
   // Native search cannot reliably recreate a historical information boundary.
   if (pointInTime) {
     return { enabled: false, reason: 'historical_as_of' };
+  }
+
+  // An event title and source URL are metadata, not the filing body. When the
+  // API has not indexed that document yet, let the provider open the exact URL.
+  if ((['event_research', 'filing_research'].includes(packet.data_plan?.route) || SOURCE_CONTENT.test(text)) && hasSourceOnlyDocument(packet)) {
+    return { enabled: true, reason: 'source_document_content_missing' };
   }
 
   const missingRequirement = mandateCoverage.find(item => item.material && item.status !== 'covered');
@@ -44,6 +51,20 @@ export function webSearchDecision({ question, intent = {}, packet = {}, evidence
   }
 
   return { enabled: false, reason: 'marked_packet_sufficient' };
+}
+
+function hasSourceOnlyDocument(packet) {
+  const rows = [
+    ...(packet.companies ?? []).flatMap(company => [
+      ...(company.datasets?.events ?? []),
+      ...(company.datasets?.filings ?? []),
+    ]),
+    ...(packet.events?.data ?? packet.events ?? []),
+    ...(packet.filings?.data ?? packet.filings ?? []),
+    ...(packet.workspace_context?.data?.events ?? []),
+    ...(packet.workspace_context?.data?.filings ?? []),
+  ];
+  return rows.some(row => row?.source_url && !row.document_id && !row.content && !row.excerpt);
 }
 
 function hasFreshSource(packet, evidence) {

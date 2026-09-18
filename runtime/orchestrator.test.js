@@ -149,6 +149,34 @@ describe('Marked orchestrator', () => {
     expect(saved.validation_warnings).toEqual([]);
   });
 
+  it('requires the provider to open URL-only event filings', async () => {
+    let prompt;
+    let options;
+    const event = {
+      event_id: 'event_1', title: 'Allotment of Securities', event_type: 'allotment',
+      source_url: 'https://example.com/allotment.pdf', document_id: null,
+    };
+    const orchestrator = new MarkedOrchestrator({
+      data: {},
+      agent: { name: 'codex', run: async (input, value) => {
+        prompt = input;
+        options = value;
+        return result();
+      } },
+      tui: { render: async () => ({}) },
+      save: () => {},
+    });
+    const session = { intent: { kind: 'company' }, mode: 'event', requested_as_of: null };
+    await orchestrator.complete(session, {
+      question: 'What is the recent allotment announcement about?', asOf: '2026-09-18', agentName: 'codex',
+      packet: { data_plan: { route: 'factual_lookup' }, workspace_context: { data: { events: [event] } } },
+      evidence: [], blocks: [], totalTools: 1, mode: 'event',
+    });
+    expect(options.webSearch).toBe(true);
+    expect(prompt).toContain('open that exact URL and read the source');
+    expect(prompt).toContain('https://example.com/allotment.pdf');
+  });
+
   it('requires a completed peer return bridge for performance attribution', async () => {
     let prompt;
     let options;
