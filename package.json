@@ -9,7 +9,8 @@
         "test:watch": "vitest",
         "test:update": "vitest run --update",
         "smoke": "node scripts/smoke.js",
-        "bench": "node scripts/bench.js"
+        "bench": "node scripts/bench.js",
+        "bench:world": "node scripts/world-latency.js"
     },
     "bin": {
         "marked": "bin/marked",
