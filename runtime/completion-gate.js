@@ -51,9 +51,13 @@ export function auditResearchResult({ result, mandate, evidence = [], validation
   }
 
   const material = dedupeIssues(issues);
+  const repairableRequirements = coverage
+    .filter(item => item.status !== 'complete' && item.status !== 'unavailable' && item.packet_status === 'missing')
+    .map(item => item.requirement);
   return {
     passed: material.length === 0,
-    needs_repair: material.length > 0,
+    needs_repair: repairableRequirements.length > 0,
+    repairable_requirements: repairableRequirements,
     search_attempted: searchAttempted,
     coverage,
     material_issues: material,
@@ -61,20 +65,42 @@ export function auditResearchResult({ result, mandate, evidence = [], validation
   };
 }
 
+/** Another provider round is useful only when it can add missing evidence. */
+export function completionAction(audit, { canRetrieve = true } = {}) {
+  if (audit.passed) return { action: 'complete', reason: 'audit_passed', requirements: [], issues: [] };
+  const repairable = audit.repairable_requirements ?? [];
+  const requirements = canRetrieve && !audit.search_attempted ? repairable : [];
+  if (requirements.length) {
+    const wanted = new Set(requirements);
+    return {
+      action: 'repair',
+      reason: 'missing_material_evidence',
+      requirements,
+      issues: audit.material_issues.filter(issue => issue.stage === 'coverage' && wanted.has(issue.requirement)),
+    };
+  }
+  if (audit.coverage.some(item => item.status !== 'complete')) {
+    const reason = !canRetrieve ? 'retrieval_disabled' : repairable.length && audit.search_attempted ? 'search_exhausted' : 'no_retrievable_evidence';
+    return { action: 'finalize_with_gap', reason, requirements: [], issues: [] };
+  }
+  return { action: 'sanitize', reason: 'citation_only', requirements: [], issues: [] };
+}
+
 /** Remove claims already rejected by the citation gate before a final render. */
 export function finalizeIncompleteResult(result, audit) {
   if (audit.passed) return { ...result, material_gaps: [] };
   const labels = audit.coverage.filter(item => item.status !== 'complete').map(item => `${item.label}: ${item.status}`);
-  const citationFailed = audit.material_issues.some(issue => issue.stage === 'citation');
+  const unsafeFields = new Set(audit.material_issues
+    .filter(issue => issue.code === 'uncited_numeric_narrative')
+    .map(issue => issue.field));
   const supportedLead = (result.claims ?? []).find(claim => claim.evidence_ids?.length)?.text;
   return {
     ...result,
-    ...(citationFailed ? {
-      summary: supportedLead || 'The requested conclusion could not be stated with validated material evidence.',
-      thesis: supportedLead || 'The requested conclusion could not be stated with validated material evidence.',
-    } : {}),
+    ...(unsafeFields.has('summary') ? { summary: supportedLead || 'The requested conclusion could not be stated with validated material evidence.' } : {}),
+    ...(unsafeFields.has('thesis') ? { thesis: supportedLead || 'The requested conclusion could not be stated with validated material evidence.' } : {}),
+    coverage: audit.coverage,
     material_gaps: [...new Set([...(result.material_gaps ?? []), ...labels])],
-    context: `${String(result.context ?? '').trim()}${result.context ? ' ' : ''}Coverage remained incomplete after the bounded research loop: ${labels.join('; ') || 'see the evidence audit'}.`,
+    context: `${String(result.context ?? '').trim()}${result.context ? ' ' : ''}Completion gate retained these gaps: ${labels.join('; ') || 'see the evidence audit'}.`,
   };
 }
 

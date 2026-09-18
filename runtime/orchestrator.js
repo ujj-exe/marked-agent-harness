@@ -15,7 +15,7 @@ import { loadSkill } from './skills.js';
 import { webSearchDecision } from './web-search.js';
 import { valuation } from './valuation.js';
 import { applyMandateToPlan, assessPacketCoverage, buildResearchMandate, needsSemanticPlanReview } from './research-mandate.js';
-import { auditResearchResult, finalizeIncompleteResult } from './completion-gate.js';
+import { auditResearchResult, completionAction, finalizeIncompleteResult } from './completion-gate.js';
 
 const RESEARCH_LOOP_MAX_DOCUMENTS = 3;
 const RESEARCH_LOOP_MAX_MS = 15_000;
@@ -824,6 +824,7 @@ export class MarkedOrchestrator {
           packetCoverage,
           searchAttempted: searchEnabled,
         });
+        const decision = completionAction(attemptAudit, { canRetrieve: session.point_in_time !== true });
         rounds.push({
           round,
           kind: round === 1 ? 'synthesis' : 'repair',
@@ -834,12 +835,22 @@ export class MarkedOrchestrator {
           sources: (result.sources ?? []).slice(0, 16),
           validation_issues: attempt.issues,
           audit: attemptAudit,
+          completion_action: decision.action,
+          ...(decision.action !== 'repair' && !attemptAudit.passed ? { repair_skipped_reason: decision.reason } : {}),
         });
         checked = attempt;
         audit = attemptAudit;
         finalEvidence = attemptEvidence;
         if (audit.passed) break;
-        previous = { result: attempt.result, audit: attemptAudit };
+        if (decision.action !== 'repair') break;
+        previous = {
+          result: attempt.result,
+          audit: {
+            ...attemptAudit,
+            material_issues: decision.issues,
+            missing_requirements: decision.requirements,
+          },
+        };
         if (round < COMPLETION_MAX_ROUNDS) {
           await this.tui.render({
             patch: true,
@@ -909,6 +920,7 @@ ${JSON.stringify(context)}`;
 }
 
 function researchCycleReceipt(session, mandate, packetCoverage, rounds, audit, startedAt) {
+  const finalRound = rounds.at(-1);
   return {
     version: 1,
     started_at: new Date(startedAt).toISOString(),
@@ -921,6 +933,8 @@ function researchCycleReceipt(session, mandate, packetCoverage, rounds, audit, s
     document_expansion: session.research_loop ?? null,
     web_search_policy: session.web_search ?? null,
     rounds,
+    completion_action: finalRound?.completion_action ?? null,
+    repair_skipped_reason: finalRound?.repair_skipped_reason ?? null,
     final_audit: audit,
   };
 }

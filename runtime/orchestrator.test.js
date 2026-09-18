@@ -175,22 +175,16 @@ describe('Marked orchestrator', () => {
     expect(prompt).toContain('do not substitute a business-quality discussion');
   });
 
-  it('repairs an incomplete analytical leg and persists the full cycle receipt', async () => {
+  it('finalizes a missing analytical leg after the first searched pass', async () => {
     let calls = 0;
     let saved;
     const orchestrator = new MarkedOrchestrator({
       data: {},
       agent: { name: 'codex', run: async () => {
         calls += 1;
-        if (calls === 1) return {
+        return {
           ...result(), sources: [], material_gaps: ['peer return missing'],
           coverage: [{ requirement: 'peer_relative_return', status: 'partial', evidence_ids: [], note: 'not found' }],
-        };
-        return {
-          ...result(),
-          sources: ['https://example.com/peer-return'], material_gaps: [],
-          claims: [{ text: 'Infosys lagged the selected peer.', evidence_ids: ['web_01'], classification: 'external_context' }],
-          coverage: [{ requirement: 'peer_relative_return', status: 'complete', evidence_ids: ['web_01'], note: 'completed from dated returns' }],
         };
       } },
       tui: { render: async () => ({}) },
@@ -208,11 +202,38 @@ describe('Marked orchestrator', () => {
       packet: { data_plan: { analysis_requirements: ['peer_relative_return'] } },
       evidence: [], blocks: [], totalTools: 0, mode: 'analytical',
     });
-    expect(calls).toBe(2);
-    expect(saved.research_cycle.rounds.map(round => round.status)).toEqual(['incomplete', 'complete']);
-    expect(saved.research_cycle.final_audit.passed).toBe(true);
+    expect(calls).toBe(1);
+    expect(saved.research_cycle.rounds.map(round => round.status)).toEqual(['incomplete']);
+    expect(saved.research_cycle).toMatchObject({ completion_action: 'finalize_with_gap', repair_skipped_reason: 'search_exhausted' });
+    expect(saved.research_cycle.final_audit.passed).toBe(false);
     expect(saved.unresolved_material_citation_issues).toBe(0);
-    expect(saved.evidence).toContainEqual(expect.objectContaining({ evidence_id: 'web_01' }));
+    expect(saved.unresolved_material_requirements).toContain('peer_relative_return');
+  });
+
+  it('sanitizes citation-only failures without a second provider call', async () => {
+    let calls = 0;
+    let saved;
+    const orchestrator = new MarkedOrchestrator({
+      data: {},
+      agent: { name: 'codex', run: async () => {
+        calls += 1;
+        return { ...result(), summary: 'Revenue rose 12%.', thesis: 'Demand remains healthy.' };
+      } },
+      tui: { render: async () => ({}) },
+      save: session => { saved = session; },
+    });
+    const session = { mode: 'analytical', requested_as_of: null, research_mandate: { version: 1, requirements: [] } };
+
+    await orchestrator.complete(session, {
+      question: 'Analyze growth', asOf: '2026-09-18', agentName: 'codex',
+      packet: {}, evidence: [], blocks: [], totalTools: 0, mode: 'analytical',
+    });
+
+    expect(calls).toBe(1);
+    expect(saved.result.summary).not.toContain('12%');
+    expect(saved.result.thesis).toBe('Demand remains healthy.');
+    expect(saved.research_cycle).toMatchObject({ completion_action: 'sanitize', repair_skipped_reason: 'citation_only' });
+    expect(saved.research_cycle.rounds).toHaveLength(1);
   });
 
   it('patches completed streamed fields before the final verdict', async () => {
@@ -663,9 +684,10 @@ describe('research packet guarantee', () => {
       expect.objectContaining({ document_id: 'doc_latest', heading: 'Management discussion' }),
     ]));
     expect(saved.research_loop).toMatchObject({ requests: 1, stop_reason: 'evidence_target' });
-    // The provider fixture intentionally omits the required coverage receipt,
-    // so the production completion gate performs its one bounded repair.
-    expect(agentCalls).toBe(2);
+    // The packet already contains the filing evidence. A missing model-authored
+    // coverage receipt is finalized as a visible gap, not another provider run.
+    expect(agentCalls).toBe(1);
+    expect(saved.research_cycle).toMatchObject({ completion_action: 'finalize_with_gap', repair_skipped_reason: 'no_retrievable_evidence' });
   });
 });
 
